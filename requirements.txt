@@ -1,0 +1,14 @@
+# PyLinkAgent Runtime Dependencies
+
+# 核心依赖
+wrapt>=1.15.0           # 函数包装/插桩
+structlog>=23.1.0       # 结构化日志
+pydantic>=2.0.0         # 配置验证
+pydantic-settings>=2.0.0
+
+# HTTP 客户端
+httpx>=0.24.0           # 与控制平台通信
+
+# 可选依赖
+packaging>=23.0         # 版本检查
+psutil>=5.9.0           # 系统指标采集

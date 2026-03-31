@@ -1,0 +1,57 @@
+# PyLinkAgent 默认配置
+
+# Agent 基础配置
+agent_id: ""
+app_name: "my-python-app"
+enabled: true
+log_level: "INFO"
+
+# 控制平台配置
+platform:
+  url: "http://localhost:8080"
+  api_key: ""
+  timeout: 30
+  retry_times: 3
+
+# 数据上报配置
+reporter:
+  enabled: true
+  batch_size: 100
+  flush_interval: 5.0
+  max_queue_size: 10000
+  compression: true
+
+# 采样配置
+sampler:
+  trace_sample_rate: 1.0
+  metric_sample_rate: 1.0
+  error_sample_rate: 1.0
+  dynamic_sampling: false
+
+# 启用的插桩模块
+enabled_modules:
+  - requests
+  - httpx
+  - fastapi
+  - flask
+  - sqlalchemy
+  - redis
+
+# 模块特定配置
+module_configs:
+  requests:
+    capture_headers: true
+    capture_body: false
+    max_body_size: 1024
+    ignored_hosts:
+      - localhost
+      - 127.0.0.1
+
+  fastapi:
+    capture_headers: true
+    capture_body: false
+    max_body_size: 1024
+    ignored_paths:
+      - /health
+      - /ready
+      - /metrics

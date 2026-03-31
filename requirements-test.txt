@@ -1,0 +1,23 @@
+# PyLinkAgent Test Dependencies
+
+# 测试框架
+pytest>=7.3.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+
+# 测试夹具
+requests-mock>=1.10.0
+respx>=0.20.0           # HTTPX mock
+
+# 被测框架（用于集成测试）
+fastapi>=0.100.0
+flask>=2.3.0
+django>=4.2
+requests>=2.30.0
+httpx>=0.24.0
+sqlalchemy>=2.0.0
+redis>=4.5.0
+
+# 性能测试
+pytest-benchmark>=4.0.0

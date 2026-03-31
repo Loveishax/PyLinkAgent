@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pylinkagent"
+dynamic = ["version"]
+description = "Python 运行时探针 - 零代码侵入的应用监控与函数控制"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "PyLinkAgent Team", email = "team@pylinkagent.dev"}
+]
+keywords = ["apm", "monitoring", "tracing", "instrumentation", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Framework :: Flask",
+    "Framework :: Django",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "wrapt>=1.15.0",
+    "structlog>=23.1.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "httpx>=0.24.0",
+    "packaging>=23.0",
+]
+
+[project.optional-dependencies]
+redis = ["redis>=4.5.0"]
+kafka = ["kafka-python>=2.0.0"]
+sqlalchemy = ["sqlalchemy>=2.0.0"]
+all = [
+    "redis>=4.5.0",
+    "kafka-python>=2.0.0",
+    "sqlalchemy>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/PyLinkAgent"
+Documentation = "https://pylinkagent.readthedocs.io"
+Repository = "https://github.com/your-org/PyLinkAgent"
+Issues = "https://github.com/your-org/PyLinkAgent/issues"
+
+[project.scripts]
+pylinkagent-run = "pylinkagent.cli:main"
+pylinkagent-cli = "pylinkagent.cli:cli_main"
+
+[tool.setuptools]
+packages = ["pylinkagent", "simulator_agent", "instrument_simulator", "instrument_modules"]
+
+[tool.setuptools_scm]
+write_to = "pylinkagent/_version.py"
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+skip = [".venv", "build", "dist"]
