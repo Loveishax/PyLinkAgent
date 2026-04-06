@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  # ==================== 业务数据库 (MySQL) ====================
+  mysql-business:
+    image: mysql:8.0
+    container_name: pylinkagent-mysql-business
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: test
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_business_data:/var/lib/mysql
+    networks:
+      - pylinkagent-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ==================== 影子数据库 (MySQL) ====================
+  mysql-shadow:
+    image: mysql:8.0
+    container_name: pylinkagent-mysql-shadow
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: shadow_test
+      MYSQL_USER: PT_app_user
+      MYSQL_PASSWORD: PT_app_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./db/init_shadow.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_shadow_data:/var/lib/mysql
+    networks:
+      - pylinkagent-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ==================== 影子 Redis (可选) ====================
+  redis-shadow:
+    image: redis:7-alpine
+    container_name: pylinkagent-redis-shadow
+    ports:
+      - "6380:6379"
+    networks:
+      - pylinkagent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ==================== Demo 应用 ====================
+  demo-app:
+    build:
+      context: ..
+      dockerfile: sandbox/Dockerfile
+    container_name: pylinkagent-demo-app
+    environment:
+      # PyLinkAgent 配置
+      PYLINKAGENT_ENABLED: "true"
+      PYLINKAGENT_LOG_LEVEL: "INFO"
+
+      # 业务数据库配置
+      DB_HOST: mysql-business
+      DB_PORT: 3306
+      DB_NAME: test
+      DB_USER: app_user
+      DB_PASSWORD: app_password
+
+      # 影子数据库配置
+      SHADOW_DB_HOST: mysql-shadow
+      SHADOW_DB_PORT: 3306
+      SHADOW_DB_NAME: shadow_test
+      SHADOW_DB_USER: PT_app_user
+      SHADOW_DB_PASSWORD: PT_app_password
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql-business:
+        condition: service_healthy
+      mysql-shadow:
+        condition: service_healthy
+    networks:
+      - pylinkagent-network
+    restart: unless-stopped
+
+  # ==================== 验证测试容器 ====================
+  test-runner:
+    build:
+      context: ..
+      dockerfile: sandbox/Dockerfile.test
+    container_name: pylinkagent-test-runner
+    environment:
+      BASE_URL: http://demo-app:8000
+    depends_on:
+      - demo-app
+    networks:
+      - pylinkagent-network
+    volumes:
+      - ./test-results:/app/test-results
+
+networks:
+  pylinkagent-network:
+    driver: bridge
+
+volumes:
+  mysql_business_data:
+  mysql_shadow_data:
