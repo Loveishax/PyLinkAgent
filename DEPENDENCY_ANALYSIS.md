@@ -1,6 +1,7 @@
 # PyLinkAgent 依赖支持情况分析
 
-**分析日期**: 2026-04-08
+**分析日期**: 2026-04-08  
+**更新说明**: 已实现 P0 优先级模块 (Redis, Flask)
 
 ---
 
@@ -8,14 +9,14 @@
 
 | 分类 | 依赖数量 | 已支持 | 待支持 | 支持率 |
 |------|----------|--------|--------|--------|
-| Web 框架 | 4 | 2 | 2 | 50% |
-| 数据库中间件 | 5 | 2 | 3 | 40% |
-| 缓存中间件 | 4 | 0 | 4 | 0% |
-| 消息中间件 | 1 | 0 | 1 | 0% |
-| HTTP 客户端 | 2 | 1 | 1 | 50% |
+| Web 框架 | 4 | 3 | 1 | 75% |
+| 数据库中间件 | 5 | 3 | 2 | 60% |
+| 缓存中间件 | 4 | 1 | 3 | 25% |
+| 消息中间件 | 1 | 1 | 0 | 100% |
+| HTTP 客户端 | 2 | 2 | 0 | 100% |
 | AI/ML 相关 | 4 | 0 | 4 | 0% |
 | 工具库 | 35 | 8 | 27 | 23% |
-| **总计** | **55** | **13** | **42** | **24%** |
+| **总计** | **55** | **19** | **36** | **35%** |
 
 ---
 
@@ -27,12 +28,13 @@
 |------|------|----------|------|
 | `fastapi` | 0.115.7 / 0.100.0+ | ✅ **已支持** | 已有 fastapi_module 插桩模块 |
 | `uvicorn` | 0.34.0 / 0.23.0+ | ✅ **已支持** | 作为 FastAPI 服务器运行 |
-| `flask` | 3.1.3 / 2.2.5 | ⏳ **待实现** | 计划中，优先级 P1 |
+| `flask` | 3.1.3 / 2.2.5 | ✅ **已实现** | P0 优先级，已有 flask_module 插桩模块 |
 | `gunicorn` | 23.0.0 / 22.0.0 | ⏳ **待实现** | WSGI 服务器，可作为 Flask 配套 |
 
 **相关工作**:
 - `PyLinkAgent/instrument_modules/fastapi_module/` - FastAPI 插桩模块
 - `PyLinkAgent/instrument_modules/requests_module/` - requests 插桩模块
+- `PyLinkAgent/instrument_modules/flask_module/` - Flask 插桩模块 (新增)
 
 ---
 
@@ -43,12 +45,13 @@
 | `sqlalchemy` | 2.0.22+ | ✅ **部分支持** | 已有 sqlalchemy_module 基础支持 |
 | `pymysql` | 1.1.2+ | ✅ **已支持** | MySQL 驱动，配合影子库使用 |
 | `flask-sqlalchemy` | 3.1.1 | ⏳ **待实现** | Flask + SQLAlchemy 集成 |
-| `redis` | 5.2.1 / 4.5.5 | ⏳ **待实现** | 高优先级 P0，影子 Redis 支持 |
+| `redis` | 5.2.1 / 4.5.5 | ✅ **已实现** | P0 优先级，已有 redis_module 插桩模块 |
 | `elasticsearch7` | 7.7.1 | ⏳ **待实现** | ES 客户端，优先级 P2 |
 
 **相关工作**:
 - `PyLinkAgent/instrument_modules/sqlalchemy_module/` - SQLAlchemy 插桩模块
 - `PyLinkAgent/pylinkagent/shadow/interceptor.py` - 影子拦截器
+- `PyLinkAgent/instrument_modules/redis_module/` - Redis 插桩模块 (新增)
 
 ---
 
@@ -56,7 +59,7 @@
 
 | 依赖 | 版本 | 支持状态 | 说明 |
 |------|------|----------|------|
-| `redis` | 5.2.1 / 4.5.5 | ⏳ **待实现** | 同时用作缓存，高优先级 P0 |
+| `redis` | 5.2.1 / 4.5.5 | ✅ **已实现** | P0 优先级，已有 redis_module 插桩模块 |
 | `cachetools` | 5.3.3 | ❌ **不支持** | 内存缓存库 |
 | `cacheout` | 0.14.1 | ❌ **不支持** | 内存缓存库 |
 | `flask-limiter` | 3.5.0 | ❌ **不支持** | 限流中间件 (基于 Redis) |
@@ -67,7 +70,7 @@
 
 | 依赖 | 版本 | 支持状态 | 说明 |
 |------|------|----------|------|
-| `confluent-kafka` | 2.3.0 | ⏳ **待实现** | Kafka 客户端，优先级 P1 |
+| `confluent-kafka` | 2.3.0 | ✅ **已实现** | P1 优先级，已有 kafka_module 插桩模块 |
 
 ---
 
@@ -91,6 +94,17 @@
 | `langfuse` | 3.9.1 | ❌ **不支持** | LLM 可观测性平台 |
 | `nltk` | 3.9.4 | ❌ **不支持** | 自然语言处理库 |
 | `jieba` | 0.42.1 | ❌ **不支持** | 中文分词库 |
+
+---
+
+### 2.7 搜索引擎 (Search Engine)
+
+| 依赖 | 版本 | 支持状态 | 说明 |
+|------|------|----------|------|
+| `elasticsearch7` | 7.7.1 | ✅ **已实现** | P1 优先级，已有 elasticsearch_module 插桩模块 |
+
+**相关工作**:
+- `PyLinkAgent/instrument_modules/elasticsearch_module/` - Elasticsearch 插桩模块 (新增)
 
 ---
 
@@ -177,20 +191,27 @@
 
 ## 三、优先级建议
 
-### P0 - 高优先级 (核心功能配套)
+### P0 - 高优先级 (核心功能配套) - 已完成 ✅
+
+| 模块 | 依赖 | 原因 | 状态 |
+|------|------|------|------|
+| Redis 插桩 | `redis` | 影子库配套，使用率高 | ✅ 已完成 |
+| Flask 插桩 | `flask`, `flask-sqlalchemy` | 主流 Web 框架 | ✅ 已完成 |
+
+### P1 - 中优先级 (常用中间件) - 已完成 ✅
+
+| 模块 | 依赖 | 原因 | 状态 |
+|------|------|------|------|
+| Kafka 插桩 | `confluent-kafka` | 消息队列主流 | ✅ 已完成 |
+| Elasticsearch 插桩 | `elasticsearch7` | 搜索引擎 | ✅ 已完成 |
+
+### P2 - 低优先级 (特定场景)
 
 | 模块 | 依赖 | 原因 | 工作量 |
 |------|------|------|--------|
-| Redis 插桩 | `redis` | 影子库配套，使用率高 | 3 天 |
-| Flask 插桩 | `flask`, `flask-sqlalchemy` | 主流 Web 框架 | 3 天 |
-
-### P1 - 中优先级 (常用中间件)
-
-| 模块 | 依赖 | 原因 | 工作量 |
-|------|------|------|--------|
-| Kafka 插桩 | `confluent-kafka` | 消息队列主流 | 3 天 |
-| Elasticsearch 插桩 | `elasticsearch7` | 搜索引擎 | 3 天 |
-| 完整 SQLAlchemy | `sqlalchemy` | 完善现有支持 | 1 天 |
+| MongoDB 插桩 | `pymongo` | NoSQL 数据库 | 3 天 |
+| gRPC 插桩 | `grpcio` | RPC 框架 | 4 天 |
+| RabbitMQ 插桩 | `pika` | 消息队列 | 3 天 |
 
 ### P2 - 低优先级 (特定场景)
 
@@ -251,7 +272,7 @@ psutil>=5.9.0              # ✅ 已使用 - 系统指标采集
 
 ## 六、总结
 
-### 当前已支持的核心依赖 (14 项)
+### 当前已支持的核心依赖 (19 项)
 
 1. `wrapt` - 插桩核心
 2. `structlog` - 日志
@@ -266,15 +287,17 @@ psutil>=5.9.0              # ✅ 已使用 - 系统指标采集
 11. `psutil` - 系统监控
 12. `pyyaml` - YAML 配置
 13. `requests` - HTTP 客户端 (已插桩)
-14. `redis` - (仅基础，待插桩)
+14. `redis` - 缓存 (已插桩)
+15. `flask` - Web 框架 (已插桩)
+16. `confluent-kafka` - 消息队列 (已插桩) **P1 新增**
+17. `elasticsearch7` - 搜索引擎 (已插桩) **P1 新增**
 
 ### 待实现的重要依赖 (按优先级)
 
-1. `redis` - 缓存/消息队列 (P0)
-2. `flask` - Web 框架 (P0)
-3. `confluent-kafka` - 消息队列 (P1)
-4. `elasticsearch7` - 搜索引擎 (P1)
+1. `pymongo` - NoSQL 数据库 (P2)
+2. `grpcio` - RPC 框架 (P2)
+3. `pika` - RabbitMQ (P2)
 
 ---
 
-**注**: 本分析基于提供的依赖列表和 PyLinkAgent 项目当前状态。
+**更新说明**: P0 优先级模块 (Redis, Flask) 已完成，P1 优先级模块 (Kafka, Elasticsearch) 已完成，支持率从 25% 提升至 35%。

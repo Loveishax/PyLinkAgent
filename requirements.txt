@@ -9,13 +9,21 @@ pydantic-settings>=2.0.0
 # HTTP 客户端
 httpx>=0.24.0           # 与控制平台通信
 
-# Web 框架 (用于 Demo 应用)
+# Web 框架 (用于 Demo 应用和插桩)
 fastapi>=0.100.0
 uvicorn>=0.23.0
+flask>=2.0.0            # Flask 框架支持
 
 # 数据库支持
 sqlalchemy>=2.0.0       # SQLAlchemy 插桩
 pymysql>=1.1.0          # MySQL 连接
+redis>=4.0.0            # Redis 客户端 (可选)
+
+# 消息队列 (可选)
+confluent-kafka>=2.0.0  # Kafka 客户端
+
+# 搜索引擎 (可选)
+elasticsearch7>=7.0.0   # Elasticsearch 客户端
 
 # 可选依赖
 packaging>=23.0         # 版本检查
