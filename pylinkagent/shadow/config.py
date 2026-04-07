@@ -244,6 +244,10 @@ class ShadowConfigManager:
         """
         从字典列表加载配置
 
+        支持 camelCase 和 snake_case 两种命名风格:
+        - camelCase: dsType, shadowUrl, shadowUsername, businessShadowTables
+        - snake_case: ds_type, shadow_url, shadow_username, business_shadow_tables
+
         Args:
             configs_data: 配置数据列表
 
@@ -253,17 +257,18 @@ class ShadowConfigManager:
         count = 0
         for data in configs_data:
             try:
+                # 支持 camelCase 和 snake_case 两种风格
                 config = ShadowDatabaseConfig(
-                    ds_type=data.get("dsType", 0),
+                    ds_type=data.get("ds_type") or data.get("dsType", 0),
                     url=data.get("url", ""),
                     username=data.get("username", ""),
                     password=data.get("password", ""),
-                    shadow_url=data.get("shadowUrl", ""),
-                    shadow_username=data.get("shadowUsername"),
-                    shadow_password=data.get("shadowPassword"),
-                    shadow_account_prefix=data.get("shadowAccountPrefix", "PT_"),
-                    shadow_account_suffix=data.get("shadowAccountSuffix", ""),
-                    business_shadow_tables=data.get("businessShadowTables", {}),
+                    shadow_url=data.get("shadow_url") or data.get("shadowUrl", ""),
+                    shadow_username=data.get("shadow_username") or data.get("shadowUsername"),
+                    shadow_password=data.get("shadow_password") or data.get("shadowPassword"),
+                    shadow_account_prefix=data.get("shadow_account_prefix") or data.get("shadowAccountPrefix", "PT_"),
+                    shadow_account_suffix=data.get("shadow_account_suffix") or data.get("shadowAccountSuffix", ""),
+                    business_shadow_tables=data.get("business_shadow_tables") or data.get("businessShadowTables", {}),
                     properties=data.get("properties", {}),
                 )
                 self.register_config(config)

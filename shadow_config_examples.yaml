@@ -1,0 +1,362 @@
+# PyLinkAgent 影子库配置文件示例
+
+## 开发环境配置
+
+```yaml
+# shadow_config.dev.yaml
+# 开发环境影子库配置
+
+shadow_databases:
+  # MySQL 影子库
+  - ds_type: 0
+    url: jdbc:mysql://localhost:3306/test
+    username: root
+    password: root123
+    shadow_url: jdbc:mysql://localhost:3307/shadow_test
+    shadow_username: PT_root
+    shadow_password: PT_root123
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      users: shadow_users
+      orders: shadow_orders
+      products: shadow_products
+
+  # PostgreSQL 影子库
+  - ds_type: 0
+    url: jdbc:postgresql://localhost:5432/app
+    username: app_user
+    password: app_pass
+    shadow_url: jdbc:postgresql://localhost:5433/shadow_app
+    shadow_username: PT_app_user
+    shadow_password: PT_app_pass
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      t_user: shadow_t_user
+      t_order: shadow_t_order
+```
+
+---
+
+## 生产环境配置
+
+```yaml
+# shadow_config.prod.yaml
+# 生产环境影子库配置
+
+shadow_databases:
+  # 主数据库影子库
+  - ds_type: 0
+    url: jdbc:mysql://prod-master.db:3306/main_db
+    username: prod_user
+    password: "${DB_PASSWORD}"  # 使用环境变量
+    shadow_url: jdbc:mysql://shadow-master.db:3306/main_db
+    shadow_username: PT_prod_user
+    shadow_password: "${SHADOW_DB_PASSWORD}"
+    shadow_account_prefix: PT_
+    shadow_account_suffix: _PRESSURE
+    business_shadow_tables:
+      customers: PT_customers
+      orders: PT_orders
+      transactions: PT_transactions
+      products: PT_products
+
+  # 从数据库影子库
+  - ds_type: 0
+    url: jdbc:mysql://prod-slave.db:3306/main_db
+    username: read_user
+    shadow_url: jdbc:mysql://shadow-slave.db:3306/main_db
+    shadow_username: PT_read_user
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      customers: PT_customers
+      orders: PT_orders
+
+  # 影子表模式（同一库内）
+  - ds_type: 1
+    url: jdbc:mysql://prod-db:3306/analytics
+    username: analytics_user
+    shadow_account_prefix: shadow_
+    business_shadow_tables:
+      report_daily: shadow_report_daily
+      report_monthly: shadow_report_monthly
+      report_summary: shadow_report_summary
+```
+
+---
+
+## 多租户配置
+
+```yaml
+# shadow_config.multi_tenant.yaml
+# 多租户影子库配置
+
+shadow_databases:
+  # 租户 A 配置
+  - ds_type: 0
+    url: jdbc:mysql://db:3306/tenant_a
+    username: tenant_a_user
+    password: tenant_a_pass
+    shadow_url: jdbc:mysql://shadow-db:3306/tenant_a
+    shadow_username: PT_tenant_a_user
+    shadow_password: PT_tenant_a_pass
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      users: shadow_users
+      orders: shadow_orders
+
+  # 租户 B 配置
+  - ds_type: 0
+    url: jdbc:mysql://db:3306/tenant_b
+    username: tenant_b_user
+    password: tenant_b_pass
+    shadow_url: jdbc:mysql://shadow-db:3306/tenant_b
+    shadow_username: PT_tenant_b_user
+    shadow_password: PT_tenant_b_pass
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      users: shadow_users
+      orders: shadow_orders
+
+  # 租户 C 配置
+  - ds_type: 0
+    url: jdbc:mysql://db:3306/tenant_c
+    username: tenant_c_user
+    password: tenant_c_pass
+    shadow_url: jdbc:mysql://shadow-db:3306/tenant_c
+    shadow_username: PT_tenant_c_user
+    shadow_password: PT_tenant_c_pass
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      users: shadow_users
+      orders: shadow_orders
+```
+
+---
+
+## 影子表模式配置
+
+```yaml
+# shadow_table_config.yaml
+# 影子表模式配置（同一数据库内）
+
+shadow_databases:
+  # 电商系统
+  - ds_type: 1
+    url: jdbc:mysql://ecommerce-db:3306/shop
+    username: shop_user
+    password: shop_pass
+    shadow_account_prefix: shadow_
+    business_shadow_tables:
+      # 用户相关
+      users: shadow_users
+      user_profiles: shadow_user_profiles
+      user_addresses: shadow_user_addresses
+
+      # 订单相关
+      orders: shadow_orders
+      order_items: shadow_order_items
+      order_logs: shadow_order_logs
+
+      # 商品相关
+      products: shadow_products
+      product_skus: shadow_product_skus
+      categories: shadow_categories
+
+      # 库存相关
+      inventory: shadow_inventory
+      stock_logs: shadow_stock_logs
+
+  # 支付系统
+  - ds_type: 1
+    url: jdbc:mysql://payment-db:3306/payment
+    username: payment_user
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      payments: PT_payments
+      refunds: PT_refunds
+      transactions: PT_transactions
+      settlements: PT_settlements
+```
+
+---
+
+## 库 + 表混合模式配置
+
+```yaml
+# shadow_hybrid_config.yaml
+# 影子库 + 影子表混合模式配置
+
+shadow_databases:
+  # 核心业务 - 影子库 + 影子表
+  - ds_type: 2
+    url: jdbc:mysql://core-db:3306/business
+    username: core_user
+    password: core_pass
+    shadow_url: jdbc:mysql://shadow-core-db:3306/business
+    shadow_username: PT_core_user
+    shadow_password: PT_core_pass
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      # 核心表使用影子库中的影子表
+      customers: PT_customers
+      accounts: PT_accounts
+      transactions: PT_transactions
+
+      # 日志表使用影子库中的原表名（不配置映射）
+      # operation_logs -> operation_logs (自动使用原表名)
+
+  # 报表系统 - 仅影子表
+  - ds_type: 1
+    url: jdbc:mysql://report-db:3306/reports
+    username: report_user
+    shadow_account_prefix: shadow_
+    business_shadow_tables:
+      daily_summary: shadow_daily_summary
+      monthly_summary: shadow_monthly_summary
+      yearly_summary: shadow_yearly_summary
+```
+
+---
+
+## 环境变量格式
+
+```bash
+# .env 文件
+# 使用环境变量加载影子库配置
+
+# 方式 1: JSON 数组格式
+PYLINKAGENT_SHADOW_CONFIGS='[
+  {
+    "ds_type": 0,
+    "url": "jdbc:mysql://localhost:3306/test",
+    "username": "root",
+    "password": "root123",
+    "shadow_url": "jdbc:mysql://localhost:3307/shadow_test",
+    "shadow_username": "PT_root",
+    "shadow_password": "PT_root123",
+    "shadow_account_prefix": "PT_",
+    "business_shadow_tables": {
+      "users": "shadow_users",
+      "orders": "shadow_orders"
+    }
+  }
+]'
+
+# 方式 2: 单个配置
+PYLINKAGENT_SHADOW_URL=jdbc:mysql://localhost:3306/test
+PYLINKAGENT_SHADOW_SHADOW_URL=jdbc:mysql://localhost:3307/shadow_test
+PYLINKAGENT_SHADOW_USERNAME=root
+PYLINKAGENT_SHADOW_PASSWORD=root123
+PYLINKAGENT_SHADOW_SHADOW_USERNAME=PT_root
+PYLINKAGENT_SHADOW_SHADOW_PASSWORD=PT_root123
+PYLINKAGENT_SHADOW_ACCOUNT_PREFIX=PT_
+PYLINKAGENT_SHADOW_TABLE_MAPPING=users:shadow_users,orders:shadow_orders
+```
+
+---
+
+## Docker Compose 配置
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    image: myapp:latest
+    environment:
+      # 使用环境变量
+      - PYLINKAGENT_SHADOW_CONFIG_FILE=/etc/pylinkagent/shadow.yaml
+
+      # 或者使用 JSON 格式
+      # - PYLINKAGENT_SHADOW_CONFIGS=[{"ds_type":0,"url":"jdbc:mysql://db:3306/test","shadow_url":"jdbc:mysql://shadow-db:3306/test"}]
+    volumes:
+      - ./shadow_config.prod.yaml:/etc/pylinkagent/shadow.yaml:ro
+    ports:
+      - "8000:8000"
+      - "8081:8081"  # 配置 API 端口
+
+  # 业务数据库
+  mysql-business:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: test
+    ports:
+      - "3306:3306"
+
+  # 影子数据库
+  mysql-shadow:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: shadow_test
+    ports:
+      - "3307:3306"
+```
+
+---
+
+## Kubernetes ConfigMap
+
+```yaml
+# shadow-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pylinkagent-shadow-config
+data:
+  shadow_config.yaml: |
+    shadow_databases:
+      - ds_type: 0
+        url: jdbc:mysql://prod-db:3306/main
+        username: prod_user
+        shadow_url: jdbc:mysql://shadow-db:3306/main
+        shadow_username: PT_prod_user
+        shadow_account_prefix: PT_
+        business_shadow_tables:
+          users: PT_users
+          orders: PT_orders
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pylinkagent-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          volumeMounts:
+            - name: shadow-config
+              mountPath: /etc/pylinkagent
+      volumes:
+        - name: shadow-config
+          configMap:
+            name: pylinkagent-shadow-config
+```
+
+---
+
+## 使用建议
+
+### 开发环境
+- 使用 YAML 配置文件
+- 配置简单，便于修改
+- 本地启动影子库
+
+### 测试环境
+- 使用环境变量或配置文件
+- 模拟生产配置
+- 完整验证影子库功能
+
+### 生产环境
+- 使用远程配置中心
+- 配置集中管理
+- 支持热更新
+- 敏感信息使用密钥管理
+
+---
+
+**版本**: v1.0.0
+**最后更新**: 2026-04-07

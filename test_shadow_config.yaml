@@ -1,0 +1,24 @@
+shadow_databases:
+  - ds_type: 0
+    url: jdbc:mysql://localhost:3306/test
+    username: root
+    password: test123
+    shadow_url: jdbc:mysql://localhost:3307/shadow_test
+    shadow_username: PT_root
+    shadow_password: PT_test123
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      users: shadow_users
+      orders: shadow_orders
+      products: shadow_products
+
+  - ds_type: 0
+    url: jdbc:mysql://localhost:3306/app
+    username: app_user
+    password: app123
+    shadow_url: jdbc:mysql://localhost:3307/shadow_app
+    shadow_username: PT_app_user
+    shadow_account_prefix: PT_
+    business_shadow_tables:
+      users: pt_users
+      items: pt_items
