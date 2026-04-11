@@ -7,10 +7,12 @@ PyLinkAgent Demo Application
 - 商品管理
 - 链路追踪
 - SQL 重写演示
+- PyLinkAgent 集成
 
 支持影子库路由，通过 x-pressure-test Header 标识压测流量
 """
 
+import os
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -18,6 +20,17 @@ from typing import List, Optional, Dict, Any
 import time
 import logging
 import json
+
+# 导入 PyLinkAgent
+try:
+    from pylinkagent.controller.external_api import ExternalAPI, HeartRequest
+    from pylinkagent.controller.config_fetcher import ConfigFetcher
+    PYLINKAGENT_AVAILABLE = True
+except ImportError:
+    PYLINKAGENT_AVAILABLE = False
+    ExternalAPI = None
+    HeartRequest = None
+    ConfigFetcher = None
 
 # 配置日志
 logging.basicConfig(
@@ -110,6 +123,21 @@ class Product(BaseModel):
 
 # ============= 工具函数 =============
 
+# PyLinkAgent 全局变量
+_external_api = None
+_config_fetcher = None
+
+
+def get_external_api() -> Optional[ExternalAPI]:
+    """获取 ExternalAPI 实例"""
+    return _external_api
+
+
+def get_config_fetcher() -> Optional[ConfigFetcher]:
+    """获取 ConfigFetcher 实例"""
+    return _config_fetcher
+
+
 def is_pressure_test(x_pressure_test: Optional[str] = None, x_shadow_flag: Optional[str] = None) -> bool:
     """判断是否为压测流量"""
     return (x_pressure_test and x_pressure_test.lower() == "true") or (x_shadow_flag is not None)
@@ -128,6 +156,81 @@ def get_orders(pressure: bool) -> List[Dict]:
 def get_products(pressure: bool) -> List[Dict]:
     """获取商品列表"""
     return SHADOW_PRODUCTS_DB if pressure else PRODUCTS_DB
+
+
+# ============= HTML 首页 =============
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化 PyLinkAgent"""
+    global _external_api, _config_fetcher
+
+    if not PYLINKAGENT_AVAILABLE:
+        logger.warning("PyLinkAgent 不可用，跳过初始化")
+        return
+
+    logger.info("正在初始化 PyLinkAgent...")
+
+    try:
+        # 从环境变量读取配置
+        takin_url = os.getenv("MANAGEMENT_URL", "http://localhost:9999")
+        app_name = os.getenv("APP_NAME", "demo-app")
+        agent_id = os.getenv("AGENT_ID", "pylinkagent-demo")
+
+        # 初始化 ExternalAPI
+        _external_api = ExternalAPI(
+            tro_web_url=takin_url,
+            app_name=app_name,
+            agent_id=agent_id,
+        )
+
+        if _external_api.initialize():
+            logger.info("ExternalAPI 初始化成功")
+
+            # 初始化 ConfigFetcher
+            _config_fetcher = ConfigFetcher(
+                external_api=_external_api,
+                interval=60,
+                initial_delay=5,
+            )
+
+            # 注册配置变更回调
+            def on_config_change(key, old_value, new_value):
+                logger.info(f"配置变更：{key}")
+
+            _config_fetcher.on_config_change(on_config_change)
+
+            if _config_fetcher.start():
+                logger.info("ConfigFetcher 启动成功")
+
+            # 发送一次心跳
+            heart_request = HeartRequest(
+                project_name=app_name,
+                agent_id=agent_id,
+                ip_address="127.0.0.1",
+                progress_id=str(os.getpid()),
+            )
+            commands = _external_api.send_heartbeat(heart_request)
+            logger.info(f"初始心跳发送成功，收到 {len(commands)} 个命令")
+        else:
+            logger.error("ExternalAPI 初始化失败")
+
+    except Exception as e:
+        logger.error(f"PyLinkAgent 初始化失败：{e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理 PyLinkAgent"""
+    global _external_api, _config_fetcher
+
+    if _config_fetcher:
+        _config_fetcher.stop()
+        logger.info("ConfigFetcher 已停止")
+
+    if _external_api:
+        _external_api.shutdown()
+        logger.info("ExternalAPI 已关闭")
 
 
 # ============= HTML 首页 =============
@@ -498,32 +601,117 @@ def shadow_status():
     }
 
 
+# ============= PyLinkAgent 相关接口 =============
+
+@app.get("/pylinkagent/status", tags=["PyLinkAgent"])
+def pylinkagent_status():
+    """获取 PyLinkAgent 状态"""
+    if not PYLINKAGENT_AVAILABLE:
+        return {"available": False, "message": "PyLinkAgent 模块未安装"}
+
+    return {
+        "available": True,
+        "external_api_initialized": _external_api is not None and _external_api.is_initialized(),
+        "config_fetcher_running": _config_fetcher is not None and _config_fetcher.is_running(),
+    }
+
+
+@app.get("/pylinkagent/config", tags=["PyLinkAgent"])
+def pylinkagent_config():
+    """获取当前影子库配置"""
+    if not PYLINKAGENT_AVAILABLE or not _config_fetcher:
+        raise HTTPException(status_code=500, detail="PyLinkAgent 未初始化")
+
+    config = _config_fetcher.get_config()
+
+    shadow_databases = {}
+    for name, cfg in config.shadow_database_configs.items():
+        shadow_databases[name] = {
+            "url": cfg.url,
+            "shadow_url": cfg.shadow_url,
+            "username": cfg.username,
+        }
+
+    return {
+        "has_shadow_config": bool(shadow_databases),
+        "shadow_databases": shadow_databases,
+    }
+
+
+@app.post("/pylinkagent/heartbeat", tags=["PyLinkAgent"])
+def manual_heartbeat():
+    """手动发送心跳"""
+    if not PYLINKAGENT_AVAILABLE or not _external_api:
+        raise HTTPException(status_code=500, detail="PyLinkAgent 未初始化")
+
+    app_name = os.getenv("APP_NAME", "demo-app")
+    agent_id = os.getenv("AGENT_ID", "pylinkagent-demo")
+
+    heart_request = HeartRequest(
+        project_name=app_name,
+        agent_id=agent_id,
+        ip_address="127.0.0.1",
+        progress_id=str(os.getpid()),
+    )
+
+    commands = _external_api.send_heartbeat(heart_request)
+
+    return {
+        "status": "success",
+        "agent_id": agent_id,
+        "commands_count": len(commands)
+    }
+
+
 # ============= 启动信息 =============
 
-if __name__ == "__main__":
-    import uvicorn
-
+def print_startup_info():
+    """打印启动信息"""
     print("=" * 60)
     print("PyLinkAgent Demo Application")
     print("=" * 60)
     print("")
-    print("📋 可用端点:")
-    print("  GET  /                  - 应用首页")
-    print("  GET  /health            - 健康检查")
-    print("  GET  /api/users         - 用户列表")
-    print("  GET  /api/users/{id}    - 用户详情")
-    print("  GET  /api/orders        - 订单列表")
-    print("  GET  /api/orders/{id}   - 订单详情")
-    print("  GET  /api/products      - 商品列表")
-    print("  GET  /api/chain/{id}    - 链路调用")
-    print("  GET  /api/sql/rewrite   - SQL 重写")
-    print("  POST /shadow/config     - 注册配置")
-    print("  GET  /shadow/status     - 影子库状态")
+    print("Endpoints:")
+    print("  GET  /                  - Application Home")
+    print("  GET  /health            - Health Check")
+    print("  GET  /api/users         - User List")
+    print("  GET  /api/users/{id}    - User Details")
+    print("  GET  /api/orders        - Order List")
+    print("  GET  /api/orders/{id}   - Order Details")
+    print("  GET  /api/products      - Product List")
+    print("  GET  /api/chain/{id}    - Chain Call")
+    print("  GET  /api/sql/rewrite   - SQL Rewrite")
+    print("  POST /shadow/config     - Register Config")
+    print("  GET  /shadow/status     - Shadow Status")
     print("")
-    print("🔧 压测流量标识:")
-    print("  x-pressure-test: true  - 标记为压测流量")
-    print("  x-shadow-flag: <value> - 影子标记")
+    print("PyLinkAgent Endpoints:")
+    print("  GET  /pylinkagent/status    - PyLinkAgent Status")
+    print("  GET  /pylinkagent/config    - Shadow Config")
+    print("  POST /pylinkagent/heartbeat - Manual Heartbeat")
+    print("")
+    print("Pressure Test Flag:")
+    print("  x-pressure-test: true  - Mark as pressure traffic")
+    print("  x-shadow-flag: <value> - Shadow flag")
+    print("  x-pradar-trace: pressure-test - Pressure flag")
+    print("")
+    print("Environment:")
+    print("  MANAGEMENT_URL=http://localhost:9999  - Takin-web URL")
+    print("  APP_NAME=demo-app                     - Application Name")
+    print("  AGENT_ID=pylinkagent-demo             - Agent ID")
+    print("")
+    print("Test Commands:")
+    print("  # Normal traffic")
+    print('  curl http://localhost:8000/api/users')
+    print("")
+    print("  # Pressure traffic")
+    print('  curl http://localhost:8000/api/users -H "x-pressure-test: true"')
     print("")
     print("=" * 60)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    print_startup_info()
 
     uvicorn.run(app, host="0.0.0.0", port=8000)

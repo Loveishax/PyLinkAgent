@@ -4,9 +4,19 @@
 [![Language](https://img.shields.io/badge/Language-Python-blue.svg)](https://www.python.org/)
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 
-PyLinkAgent 是一个基于 Python 的运行时探针，设计灵感来源于 LinkAgent (Java)。它通过运行时插桩技术（无需修改任何业务应用代码）实现对 Python 应用的**数据采集**和**函数控制**。
+PyLinkAgent 是一个基于 Python 的链路追踪探针 Agent，与 Takin-web / takin-ee-web 控制台对接，提供应用性能监控和压测流量标识能力。
 
 ## 核心特性
+
+### Takin-web 对接功能
+
+- **心跳上报**: 定期向 Takin-web 上报 Agent 状态
+- **配置拉取**: 动态拉取影子库、影子 Job 等配置
+- **命令接收**: 接收并执行控制台下发的命令（安装/升级/卸载）
+- **流量标识**: 识别压测流量并路由到影子库
+- **多租户支持**: 支持 tenant_id 和 env_code 隔离
+
+### 原始插桩功能
 
 - **零代码侵入**：无需修改任何业务代码，通过环境变量或包装器启动即可
 - **数据采集**：支持 Trace、Metric、自定义埋点
@@ -16,6 +26,80 @@ PyLinkAgent 是一个基于 Python 的运行时探针，设计灵感来源于 Li
 - **主流框架支持**：FastAPI、Flask、Django、requests、SQLAlchemy、Redis 等
 
 ## 快速开始
+
+### 1. 安装依赖
+
+```bash
+cd PyLinkAgent
+pip install -r requirements.txt
+```
+
+### 2. 配置环境变量
+
+```bash
+# Takin-web 地址
+export MANAGEMENT_URL=http://localhost:9999
+
+# 应用配置
+export APP_NAME=my-app
+export AGENT_ID=agent-001
+```
+
+### 3. 运行验证脚本
+
+```bash
+# 验证与控制台通信
+python scripts/test_takin_web_communication.py
+
+# 快速启动
+python scripts/quickstart.py
+```
+
+### 4. 作为库使用
+
+```python
+from pylinkagent.controller.external_api import ExternalAPI, HeartRequest
+from pylinkagent.controller.config_fetcher import ConfigFetcher
+import os
+import time
+
+# 初始化
+api = ExternalAPI(
+    tro_web_url="http://localhost:9999",
+    app_name="my-app",
+    agent_id="agent-001",
+)
+api.initialize()
+
+# 启动配置拉取
+fetcher = ConfigFetcher(api, interval=60)
+fetcher.start()
+
+# 发送心跳
+heart_request = HeartRequest(
+    project_name="my-app",
+    agent_id="agent-001",
+    ip_address="192.168.1.100",
+    progress_id=str(os.getpid()),
+)
+commands = api.send_heartbeat(heart_request)
+
+# 处理命令
+for cmd in commands:
+    if cmd.id > 0:
+        print(f"执行命令：{cmd.id}")
+        api.report_command_result(cmd.id, True)
+
+# 保持运行
+try:
+    while True:
+        time.sleep(15)
+except KeyboardInterrupt:
+    fetcher.stop()
+    api.shutdown()
+```
+
+## 快速开始 (原始插桩功能)
 
 ### 方式一：环境变量注入（推荐）
 
@@ -53,116 +137,174 @@ app = FastAPI()
 
 ```
 PyLinkAgent/
+├── pylinkagent/                 # 核心包
+│   ├── controller/              # 控制器
+│   │   ├── external_api.py      # 外部 API (与控制台通信)
+│   │   ├── config_fetcher.py    # 配置拉取器
+│   │   └── command_handler.py   # 命令处理器
+│   ├── simulator_agent/         # 探针 Agent
+│   │   ├── config_manager.py    # 配置管理
+│   │   └── pradar_core.py       # Pradar 核心
+│   └── utils/                   # 工具函数
+├── scripts/                     # 脚本
+│   ├── test_takin_web_communication.py  # 通信验证
+│   └── quickstart.py            # 快速启动
+├── database/                    # 数据库脚本
+│   └── pylinkagent_tables.sql   # 表定义
+├── docs/                        # 文档
+│   ├── TAKIN_WEB_INTEGRATION.md # 对接文档
+│   ├── DEPLOYMENT_GUIDE.md      # 部署指南
+│   └── REFACTOR_REPORT.md       # 重构报告
+├── requirements.txt             # 依赖
+└── README.md                    # 本文档
+```
+
+### 原始插桩模块
+
+```
 ├── pylinkagent/                # 核心包
 │   ├── core/                   # 核心引擎
 │   ├── patcher/                # 插桩引擎
 │   ├── lifecycle/              # 生命周期管理
 │   └── utils/                  # 工具函数
-├── simulator_agent/            # 控制面模块
 ├── instrument_simulator/       # 探针框架
 ├── instrument_modules/         # 插桩模块
 │   ├── requests_module/        # requests 插桩
 │   ├── fastapi_module/         # FastAPI 插桩
 │   └── ...
-├── config/                     # 配置文件
-├── tests/                      # 测试
-└── docs/                       # 文档
+└── config/                     # 配置文件
 ```
 
-## 支持的框架和库
+## 框架支持
 
 | 类型 | 名称 | 状态 |
 |------|------|------|
 | HTTP 客户端 | requests | ✅ |
 | HTTP 客户端 | httpx | ✅ |
-| HTTP 客户端 | aiohttp | ⏳ |
 | Web 框架 | FastAPI | ✅ |
-| Web 框架 | Flask | ⏳ |
-| Web 框架 | Django | ⏳ |
-| 数据库 | SQLAlchemy | ⏳ |
-| 缓存 | Redis | ⏳ |
-| 消息队列 | Kafka | ⏳ |
-| 消息队列 | RabbitMQ | ⏳ |
 
 > ✅ 已实现 | ⏳ 计划中
-
-## 配置示例
-
-```yaml
-# pylinkagent.yaml
-agent_id: "my-app-001"
-app_name: "my-fastapi-app"
-enabled: true
-log_level: "INFO"
-
-platform:
-  url: "http://localhost:8080"
-  api_key: "your-api-key"
-
-sampler:
-  trace_sample_rate: 0.1  # 10% 采样
-
-enabled_modules:
-  - requests
-  - fastapi
-```
 
 ## 开发与构建
 
 ```bash
-# 克隆项目
-git clone https://github.com/your-org/PyLinkAgent.git
-cd PyLinkAgent
-
-# 创建虚拟环境
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
+# 安装依赖
+pip install -r requirements.txt
 
 # 安装开发依赖
 pip install -r requirements-dev.txt
 
-# 安装项目（可编辑模式）
-pip install -e .
-
 # 运行测试
 pytest tests/ -v
-
-# 构建
-make build
 ```
 
-## 命令行工具
+## 核心接口
 
+### ExternalAPI
+
+与控制台 (Takin-web) 通信的核心接口：
+
+| 方法 | 功能 | 接口路径 |
+|------|------|----------|
+| `send_heartbeat()` | 心跳上报 | `/api/agent/heartbeat` |
+| `fetch_shadow_database_config()` | 拉取影子库配置 | `/api/link/ds/configs/pull` |
+| `get_latest_command()` | 拉取命令 | `/api/agent/application/node/probe/operate` |
+| `report_command_result()` | 上报命令结果 | `/api/agent/application/node/probe/operateResult` |
+| `upload_application_info()` | 上传应用信息 | `/api/application/center/app/info` |
+| `fetch_shadow_job_config()` | 拉取影子 Job 配置 | `/api/shadow/job/queryByAppName` |
+
+### ConfigFetcher
+
+定时拉取配置的器：
+
+```python
+fetcher = ConfigFetcher(api, interval=60)
+fetcher.start()
+
+# 注册配置变更回调
+fetcher.on_config_change(lambda key, old, new: print(f"{key} 变更"))
+
+# 获取当前配置
+config = fetcher.get_config()
+for name, cfg in config.shadow_database_configs.items():
+    print(f"{name}: {cfg.url} -> {cfg.shadow_url}")
+```
+
+## 配置项
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `MANAGEMENT_URL` | Takin-web 地址 | `http://localhost:9999` |
+| `APP_NAME` | 应用名称 | `test-app` |
+| `AGENT_ID` | Agent ID | `pylinkagent-001` |
+| `NODE_KEY` | 节点标识 | `pylinkagent-<pid>` |
+| `REGISTER_NAME` | 注册中心 (zookeeper/kafka) | `zookeeper` |
+
+## 数据库表
+
+PyLinkAgent 使用以下数据库表（由 Takin-web 管理）：
+
+| 表名 | 说明 |
+|------|------|
+| `t_agent_report` | 探针心跳数据 |
+| `t_application_mnt` | 应用管理 |
+| `t_application_ds_manage` | 数据源配置 |
+| `t_shadow_table_datasource` | 影子表数据源 |
+| `t_shadow_job_config` | 影子 Job 配置 |
+| `t_shadow_mq_consumer` | 影子 MQ 消费者 |
+| `t_application_node_probe` | 探针操作记录 |
+
+创建表：
 ```bash
-# 查看探针状态
-pylinkagent-cli status
-
-# 模块管理
-pylinkagent-cli modules list
-pylinkagent-cli modules reload requests
-
-# 配置管理
-pylinkagent-cli config show
-
-# 交互式模式
-pylinkagent-cli shell
+mysql -u root -p takin_web < database/pylinkagent_tables.sql
 ```
 
 ## 文档
 
-- [架构设计文档](docs/architecture.md)
-- [快速开始](docs/quickstart.md)
-- [构建指南](docs/howtobuild.md)
-- [模块开发指南](docs/module-development.md)
-- [配置说明](docs/configuration.md)
-- [FAQ](docs/faq.md)
+- [对接文档 (TAKIN_WEB_INTEGRATION.md)](TAKIN_WEB_INTEGRATION.md) - API 接口详细说明
+- [部署指南 (DEPLOYMENT_GUIDE.md)](DEPLOYMENT_GUIDE.md) - 部署和验证步骤
+- [重构报告 (REFACTOR_REPORT.md)](REFACTOR_REPORT.md) - 重构历史和变更说明
 
-## 性能影响
+## 故障排查
 
-在典型 Web 应用场景下：
-- 无插桩模式：零开销
-- 启用插桩（100% 采样）：< 5% 延迟增加
-- 启用插桩（1% 采样）：< 1% 延迟增加
+### 连接被拒绝
+
+```bash
+# 检查 Takin-web 是否运行
+curl http://localhost:9999
+
+# 检查端口
+netstat -an | grep 9999
+```
+
+### 配置拉取返回空
+
+- 确认应用在 Takin-web 中已注册
+- 确认影子库配置已创建
+
+### 心跳无记录
+
+```sql
+-- 检查应用是否存在
+SELECT * FROM t_application_mnt WHERE APPLICATION_NAME = 'my-app';
+
+-- 查看心跳记录
+SELECT * FROM t_agent_report ORDER BY gmt_update DESC LIMIT 10;
+```
+
+## 版本历史
+
+### 2.0.0 (2026-04-11) - 重构版本
+
+- 重构与控制台通信接口，对接 Takin-web
+- 新增影子库配置拉取
+- 重写 ConfigFetcher
+- 完善验证工具和文档
+
+### 1.0.0 (早期版本)
+
+- 基础探针功能
+- 原始插桩模块
 
 ## 贡献
 

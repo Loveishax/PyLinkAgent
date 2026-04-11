@@ -120,14 +120,44 @@ class ExternalAPI:
     外部 API - 与控制台通信的核心接口
 
     参考 Java LinkAgent 的 ExternalAPIImpl 实现
+    对接 Takin-web / takin-ee-web 接口
     """
 
-    # API 端点 (根据 Java Agent Management Client 的 Heartbeat.java)
-    HEART_URL = "/open/agent/heartbeat"
-    ACK_URL = "/open/agent/event/ack"
-    # 命令轮询和结果上报告知 Controller 中使用
-    COMMAND_URL = "/open/service/poll"
-    REPORT_URL = "/open/service/ack"
+    # ==================== 心跳相关接口 ====================
+    # 心跳上报接口 (对应 Java: ExternalAPIImpl.HEART_URL = "api/agent/heartbeat")
+    HEART_URL = "/api/agent/heartbeat"
+
+    # ==================== 命令相关接口 ====================
+    # 命令拉取接口 (对应 Java: ExternalAPIImpl.COMMAND_URL = "api/agent/application/node/probe/operate")
+    COMMAND_URL = "/api/agent/application/node/probe/operate"
+
+    # 命令结果上报接口 (对应 Java: ExternalAPIImpl.REPORT_URL = "api/agent/application/node/probe/operateResult")
+    REPORT_URL = "/api/agent/application/node/probe/operateResult"
+
+    # ==================== 配置拉取接口 ====================
+    # 影子库配置拉取 (对应 Java: ApplicationConfigHttpResolver.SHADOW_DB_TABLE_URL)
+    SHADOW_DB_CONFIG_URL = "/api/link/ds/configs/pull"
+
+    # 远程调用配置 (白名单/黑名单/Mock) (对应 Java: ApplicationConfigHttpResolver.WHITELIST_FILE_URL)
+    REMOTE_CALL_CONFIG_URL = "/api/remote/call/configs/pull"
+
+    # 影子 Redis Server 配置 (对应 Java: ApplicationConfigHttpResolver.REDIS_SHADOW_SERVER_URL)
+    SHADOW_REDIS_SERVER_URL = "/api/link/ds/server/configs/pull"
+
+    # 影子 ES Server 配置 (对应 Java: ApplicationConfigHttpResolver.ES_SHADOW_SERVER_URL)
+    SHADOW_ES_SERVER_URL = "/api/link/es/server/configs/pull"
+
+    # 影子 Job 配置 (对应 Java: ApplicationConfigHttpResolver.TRO_SHADOW_JOB_URL)
+    SHADOW_JOB_URL = "/api/shadow/job/queryByAppName"
+
+    # 影子 MQ 消费者配置 (对应 Java: ApplicationConfigHttpResolver.TRO_SHADOW_MQ_CONSUMER_URL)
+    SHADOW_MQ_CONSUMER_URL = "/api/agent/configs/shadow/consumer"
+
+    # ACK 接口 (保留)
+    ACK_URL = "/api/agent/event/ack"
+
+    # 应用信息上传接口
+    APP_UPLOAD_URL = "/api/application/center/app/info"
 
     def __init__(
         self,
@@ -201,6 +231,7 @@ class ExternalAPI:
         获取最新命令
 
         对应 Java 的 getLatestCommandPacket()
+        接口：GET /api/agent/application/node/probe/operate
 
         Returns:
             CommandPacket: 命令包，无命令时返回 NO_ACTION_PACKET
@@ -223,13 +254,14 @@ class ExternalAPI:
             if not response:
                 return CommandPacket.no_action_packet()
 
-            # 解析响应
-            if response.get("success", False):
-                data = response.get("data", {})
-                if data:
-                    cmd = CommandPacket.from_dict(data)
-                    logger.info(f"获取到命令：id={cmd.id}, type={cmd.command_type}")
-                    return cmd
+            # Takin-web 响应格式：{ "success": true, "data": {...} }
+            if isinstance(response, dict):
+                if response.get("success", True):
+                    data = response.get("data", {})
+                    if data:
+                        cmd = CommandPacket.from_dict(data)
+                        logger.info(f"获取到命令：id={cmd.id}, type={cmd.command_type}")
+                        return cmd
 
             return CommandPacket.no_action_packet()
 
@@ -242,12 +274,13 @@ class ExternalAPI:
         发送心跳
 
         对应 Java 的 sendHeart()
+        接口：POST /api/agent/heartbeat
 
         Args:
             heart_request: 心跳请求
 
         Returns:
-            List[CommandPacket]: 命令包列表（控制台返回的待执行命令）
+            List[CommandPacket]: 控制台返回的待执行命令列表
         """
         if not self._initialized:
             logger.warning("ExternalAPI 未初始化")
@@ -260,18 +293,28 @@ class ExternalAPI:
         heart_request.agent_id = self.agent_id
 
         try:
-            response = self._request("POST", url, heart_request.to_dict())
+            # Takin-web 直接返回 List<AgentCommandResBO>，不需要包装在 Result 中
+            response_data = self._request("POST", url, heart_request.to_dict())
 
-            if not response:
+            if not response_data:
                 return []
 
-            # 解析返回的命令列表
-            if response.get("success", False):
-                commands_data = response.get("data", [])
-                commands = [CommandPacket.from_dict(c) for c in commands_data]
+            # Takin-web 的响应格式：直接是命令数组
+            # [{ "id": 1, "extrasString": "..." }, ...]
+            if isinstance(response_data, list):
+                commands = [CommandPacket.from_dict(c) for c in response_data]
                 if commands:
                     logger.info(f"心跳响应返回 {len(commands)} 个命令")
                 return commands
+
+            # 如果响应包装在 { "success": true, "data": [...] } 中
+            if isinstance(response_data, dict):
+                if response_data.get("success", True):
+                    data = response_data.get("data", [])
+                    commands = [CommandPacket.from_dict(c) for c in data]
+                    if commands:
+                        logger.info(f"心跳响应返回 {len(commands)} 个命令")
+                    return commands
 
             return []
 
@@ -289,6 +332,7 @@ class ExternalAPI:
         上报命令执行结果
 
         对应 Java 的 reportCommandResult()
+        接口：POST /api/agent/application/node/probe/operateResult
 
         Args:
             command_id: 命令 ID
@@ -315,7 +359,7 @@ class ExternalAPI:
 
         try:
             response = self._request("POST", url, body)
-            success = response.get("success", False) if response else False
+            success = response.get("success", True) if response else False
 
             if success:
                 logger.info(f"命令执行结果已上报：commandId={command_id}, success={is_success}")
@@ -327,6 +371,255 @@ class ExternalAPI:
         except Exception as e:
             logger.error(f"上报命令结果失败：{e}")
             return False
+
+    def fetch_shadow_database_config(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        拉取影子库配置
+
+        对应 Java 的 getPressureTable4AccessSimple()
+        接口：GET /api/link/ds/configs/pull?appName=xxx
+
+        Returns:
+            影子库配置列表，失败返回 None
+
+        配置格式示例:
+        [
+            {
+                "dataSourceName": "master",
+                "url": "jdbc:mysql://master:3306/app",
+                "username": "root",
+                "shadowUrl": "jdbc:mysql://shadow:3306/app_shadow",
+                "shadowUsername": "root_shadow"
+            }
+        ]
+        """
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return None
+
+        url = f"{self.SHADOW_DB_CONFIG_URL}?appName={self.app_name}"
+
+        try:
+            response = self._request("GET", url)
+
+            if not response:
+                logger.warning("影子库配置拉取返回空")
+                return None
+
+            # Takin-web 响应格式：{ "success": true, "data": [...] }
+            if isinstance(response, dict):
+                if not response.get("success", True):
+                    logger.error(f"影子库配置拉取失败：{response.get('error', 'unknown error')}")
+                    return None
+                data = response.get("data", [])
+            elif isinstance(response, list):
+                data = response
+            else:
+                logger.error(f"影子库配置响应格式异常：{response}")
+                return None
+
+            if data:
+                logger.info(f"影子库配置拉取成功：{len(data)} 个数据源")
+            return data
+
+        except Exception as e:
+            logger.error(f"拉取影子库配置失败：{e}")
+            return None
+
+    def fetch_remote_call_config(self) -> Optional[Dict[str, Any]]:
+        """
+        拉取远程调用配置 (白名单/黑名单/Mock)
+
+        对应 Java 的 getWhiteList()
+        接口：GET /api/remote/call/configs/pull?appName=xxx
+
+        Returns:
+            远程调用配置，失败返回 None
+
+        配置格式示例:
+        {
+            "newBlists": [...],  # 黑名单
+            "wLists": [...],     # 白名单
+            "mockConfigs": [...] # Mock 配置
+        }
+        """
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return None
+
+        url = f"{self.REMOTE_CALL_CONFIG_URL}?appName={self.app_name}"
+
+        try:
+            response = self._request("GET", url)
+
+            if not response:
+                logger.warning("远程调用配置拉取返回空")
+                return None
+
+            # Takin-web 响应格式：{ "success": true, "data": {...} }
+            if isinstance(response, dict):
+                if not response.get("success", True):
+                    logger.error(f"远程调用配置拉取失败：{response.get('error', 'unknown error')}")
+                    return None
+                data = response.get("data", {})
+            else:
+                logger.error(f"远程调用配置响应格式异常：{response}")
+                return None
+
+            logger.info(f"远程调用配置拉取成功")
+            return data
+
+        except Exception as e:
+            logger.error(f"拉取远程调用配置失败：{e}")
+            return None
+
+    def upload_application_info(self, app_info: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        上传应用信息
+
+        对应 Java 的 uploadAppInfo()
+        接口：POST /api/application/center/app/info
+
+        Args:
+            app_info: 应用信息字典，为 None 时使用默认值
+
+        Returns:
+            bool: 上传成功返回 True
+
+        应用信息格式:
+        {
+            "applicationName": "test-app",
+            "applicationDesc": "应用描述",
+            "useYn": 0,  # 0:启用，1:禁用
+            "accessStatus": 0,  # 0:正常，1:待配置，2:待检测，3:异常
+            "switchStatus": "OPENED",  # OPENED:已开启，CLOSED:已关闭
+            "nodeNum": 1,
+            "agentVersion": "1.0.0",
+            "pradarVersion": "1.0.0"
+        }
+        """
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return False
+
+        url = self.APP_UPLOAD_URL
+
+        # 使用默认应用信息
+        if app_info is None:
+            app_info = {
+                "applicationName": self.app_name,
+                "applicationDesc": f"Application: {self.app_name}",
+                "useYn": 0,
+                "accessStatus": 0,
+                "switchStatus": "OPENED",
+                "nodeNum": 1,
+                "agentVersion": self.agent_version if hasattr(self, 'agent_version') else "1.0.0",
+                "pradarVersion": self.simulator_version if hasattr(self, 'simulator_version') else "1.0.0",
+            }
+
+        try:
+            response = self._request("POST", url, app_info)
+
+            if not response:
+                logger.warning("应用信息上传返回空")
+                return False
+
+            # Takin-web 响应格式：{ "success": true, "data": {...} }
+            if isinstance(response, dict):
+                if response.get("success", True):
+                    logger.info(f"应用信息上传成功：{self.app_name}")
+                    return True
+                else:
+                    logger.error(f"应用信息上传失败：{response.get('error', 'unknown error')}")
+                    return False
+
+            return False
+
+        except Exception as e:
+            logger.error(f"上传应用信息失败：{e}")
+            return False
+
+    def upload_access_status(self, error_info: Dict[str, Any]) -> bool:
+        """
+        上报应用接入状态
+
+        对应 Java 的 uploadAccessStatus()
+        接口：POST /api/application/agent/access/status
+
+        Args:
+            error_info: 错误信息字典
+
+        Returns:
+            bool: 上报成功返回 True
+        """
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return False
+
+        url = "/api/application/agent/access/status"
+
+        body = {
+            "nodeKey": os.getenv("NODE_KEY", "pylinkagent-" + str(os.getpid())),
+            "agentId": self.agent_id,
+            "applicationName": self.app_name,
+            "switchErrorMap": error_info,
+        }
+
+        try:
+            response = self._request("POST", url, body)
+
+            if response:
+                logger.info(f"应用接入状态上报成功")
+                return True
+            else:
+                logger.warning(f"应用接入状态上报返回空")
+                return False
+
+        except Exception as e:
+            logger.error(f"上报应用接入状态失败：{e}")
+            return False
+
+    def fetch_shadow_job_config(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        拉取影子 Job 配置
+
+        对应 Java 的 getShadowJobConfig()
+        接口：GET /api/shadow/job/queryByAppName?appName=xxx
+
+        Returns:
+            影子 Job 配置列表，失败返回 None
+        """
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return None
+
+        url = f"{self.SHADOW_JOB_URL}?appName={self.app_name}"
+
+        try:
+            response = self._request("GET", url)
+
+            if not response:
+                logger.warning("影子 Job 配置拉取返回空")
+                return None
+
+            if isinstance(response, dict):
+                if not response.get("success", True):
+                    logger.error(f"影子 Job 配置拉取失败：{response.get('error', 'unknown error')}")
+                    return None
+                data = response.get("data", [])
+            elif isinstance(response, list):
+                data = response
+            else:
+                logger.error(f"影子 Job 配置响应格式异常：{response}")
+                return None
+
+            if data:
+                logger.info(f"影子 Job 配置拉取成功：{len(data)} 个 Job")
+            return data
+
+        except Exception as e:
+            logger.error(f"拉取影子 Job 配置失败：{e}")
+            return None
 
     def download_module(self, download_url: str, target_path: str) -> Optional[str]:
         """

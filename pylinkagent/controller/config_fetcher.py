@@ -1,19 +1,19 @@
 """
 ConfigFetcher - PyLinkAgent 配置拉取
 
-参考 Java LinkAgent 的 ConfigFetcherModule 机制，定期从控制台拉取配置。
+参考 Java LinkAgent 的 ApplicationConfigHttpResolver 机制，从 Takin-web 拉取配置。
 
 核心功能:
+- 影子库配置拉取 (/api/link/ds/configs/pull)
+- 远程调用配置拉取 (/api/remote/call/configs/pull)
 - 定时配置拉取 (默认 60 秒)
 - 配置变更检测
 - 配置变更事件通知
-- 支持影子库等配置同步
 """
 
 import logging
 import time
 import threading
-import json
 from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
@@ -25,34 +25,37 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ShadowDatabaseConfig:
+    """影子库配置"""
+    datasource_name: str = ""
+    url: str = ""
+    username: str = ""
+    password: str = ""
+    shadow_url: str = ""
+    shadow_username: str = ""
+    shadow_password: str = ""
+    shadow_table_rules: Dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ShadowDatabaseConfig":
+        """从字典创建"""
+        return cls(
+            datasource_name=data.get("dataSourceName", ""),
+            url=data.get("url", ""),
+            username=data.get("username", ""),
+            password=data.get("password", ""),
+            shadow_url=data.get("shadowUrl", ""),
+            shadow_username=data.get("shadowUsername", ""),
+            shadow_password=data.get("shadowPassword", ""),
+            shadow_table_rules=data.get("shadowTableRules", {}),
+        )
+
+
+@dataclass
 class ConfigData:
     """配置数据"""
-    # 影子库配置
-    shadow_database_configs: Dict[str, Any] = field(default_factory=dict)
-
-    # 全局开关配置
-    global_switch: Dict[str, Any] = field(default_factory=dict)
-
-    # Redis 影子服务器配置
-    redis_shadow_configs: Dict[str, Any] = field(default_factory=dict)
-
-    # ES 影子服务器配置
-    es_shadow_configs: Dict[str, Any] = field(default_factory=dict)
-
-    # MQ 白名单配置
-    mq_white_list: List[str] = field(default_factory=list)
-
-    # RPC 白名单配置
-    rpc_white_list: List[str] = field(default_factory=list)
-
-    # URL 白名单配置
-    url_white_list: List[str] = field(default_factory=list)
-
-    # Mock 配置
-    mock_configs: Dict[str, Any] = field(default_factory=dict)
-
-    # 影子 Job 配置
-    shadow_job_configs: Dict[str, Any] = field(default_factory=dict)
+    # 影子库配置 (key: datasourceName, value: ShadowDatabaseConfig)
+    shadow_database_configs: Dict[str, ShadowDatabaseConfig] = field(default_factory=dict)
 
     # 原始配置数据
     raw_config: Dict[str, Any] = field(default_factory=dict)
@@ -60,25 +63,13 @@ class ConfigData:
 
 class ConfigFetcher:
     """
-    配置拉取器 - 定期从控制台拉取配置
+    配置拉取器 - 定期从 Takin-web 拉取配置
 
-    参考 Java LinkAgent 的 ConfigFetcherModule 实现
-    Java 中默认 60 秒拉取一次配置
+    参考 Java LinkAgent 的 ApplicationConfigHttpResolver 实现
     """
 
     DEFAULT_INTERVAL = 60  # 默认拉取间隔 (秒)
-    DEFAULT_INITIAL_DELAY = 10  # 默认初始延迟 (秒)
-
-    # 配置项键名
-    KEY_SHADOW_DATABASE = "shadowDatabaseConfigs"
-    KEY_GLOBAL_SWITCH = "globalSwitch"
-    KEY_REDIS_SHADOW = "redisShadowServerConfigs"
-    KEY_ES_SHADOW = "esShadowServerConfigs"
-    KEY_MQ_WHITE_LIST = "mqWhiteList"
-    KEY_RPC_WHITE_LIST = "rpcWhiteList"
-    KEY_URL_WHITE_LIST = "urlWhiteList"
-    KEY_MOCK_CONFIG = "mockConfigs"
-    KEY_SHADOW_JOB = "shadowJobConfigs"
+    DEFAULT_INITIAL_DELAY = 5  # 默认初始延迟 (秒)
 
     def __init__(
         self,
@@ -154,7 +145,7 @@ class ConfigFetcher:
         """
         return self._current_config
 
-    def get_shadow_database_config(self, datasource_name: str) -> Optional[Dict[str, Any]]:
+    def get_shadow_database_config(self, datasource_name: str) -> Optional[ShadowDatabaseConfig]:
         """
         获取影子库配置
 
@@ -166,7 +157,7 @@ class ConfigFetcher:
         """
         return self._current_config.shadow_database_configs.get(datasource_name)
 
-    def get_all_shadow_database_configs(self) -> Dict[str, Any]:
+    def get_all_shadow_database_configs(self) -> Dict[str, ShadowDatabaseConfig]:
         """
         获取所有影子库配置
 
@@ -174,18 +165,6 @@ class ConfigFetcher:
             影子库配置字典
         """
         return self._current_config.shadow_database_configs
-
-    def is_global_switch_enabled(self, switch_name: str) -> bool:
-        """
-        检查全局开关是否启用
-
-        Args:
-            switch_name: 开关名称
-
-        Returns:
-            bool: 是否启用
-        """
-        return self._current_config.global_switch.get(switch_name, False)
 
     def on_config_change(self, callback: Callable[[str, Any, Any], None]) -> None:
         """
@@ -209,101 +188,39 @@ class ConfigFetcher:
             return None
 
         try:
-            # 构建配置拉取 URL
-            config_url = "/api/agent/config/fetch"
+            new_config = ConfigData()
 
-            params = {
-                "appName": self.external_api.app_name,
-                "agentId": self.external_api.agent_id,
+            # 1. 拉取影子库配置
+            shadow_db_data = self.external_api.fetch_shadow_database_config()
+            if shadow_db_data:
+                for item in shadow_db_data:
+                    config = ShadowDatabaseConfig.from_dict(item)
+                    if config.datasource_name:
+                        new_config.shadow_database_configs[config.datasource_name] = config
+                        logger.debug(f"解析影子库配置：{config.datasource_name}")
+
+            # 2. 保存原始配置
+            new_config.raw_config = {
+                "shadow_database_configs": shadow_db_data or [],
             }
 
-            url = f"{config_url}?appName={params['appName']}&agentId={params['agentId']}"
+            # 3. 检测配置变更
+            self._check_config_games(new_config)
 
-            # 发送请求
-            response = self.external_api._request("GET", url)
-
-            if not response or not response.get("success", False):
-                logger.debug("配置拉取返回空或失败")
-                return None
-
-            # 解析配置数据
-            config_data = response.get("data", {})
-            new_config = self._parse_config(config_data)
-
-            # 检测配置变更
-            self._check_config_changes(new_config)
-
-            # 更新当前配置
+            # 4. 更新当前配置
             self._current_config = new_config
 
-            logger.info(f"配置拉取成功")
+            if new_config.shadow_database_configs:
+                logger.info(f"配置拉取成功：{len(new_config.shadow_database_configs)} 个影子库配置")
+            else:
+                logger.info("配置拉取成功：无影子库配置")
             return new_config
 
         except Exception as e:
             logger.error(f"拉取配置失败：{e}")
             return None
 
-    def _parse_config(self, config_data: Dict[str, Any]) -> ConfigData:
-        """
-        解析配置数据
-
-        Args:
-            config_data: 原始配置数据
-
-        Returns:
-            ConfigData: 解析后的配置
-        """
-        config = ConfigData()
-        config.raw_config = config_data
-
-        # 解析影子库配置
-        if self.KEY_SHADOW_DATABASE in config_data:
-            config.shadow_database_configs = config_data[self.KEY_SHADOW_DATABASE]
-            logger.debug(f"解析影子库配置：{len(config.shadow_database_configs)} 个数据源")
-
-        # 解析全局开关
-        if self.KEY_GLOBAL_SWITCH in config_data:
-            config.global_switch = config_data[self.KEY_GLOBAL_SWITCH]
-            logger.debug(f"解析全局开关：{len(config.global_switch)} 个开关")
-
-        # 解析 Redis 影子配置
-        if self.KEY_REDIS_SHADOW in config_data:
-            config.redis_shadow_configs = config_data[self.KEY_REDIS_SHADOW]
-            logger.debug(f"解析 Redis 影子配置：{len(config.redis_shadow_configs)} 个配置")
-
-        # 解析 ES 影子配置
-        if self.KEY_ES_SHADOW in config_data:
-            config.es_shadow_configs = config_data[self.KEY_ES_SHADOW]
-            logger.debug(f"解析 ES 影子配置：{len(config.es_shadow_configs)} 个配置")
-
-        # 解析 MQ 白名单
-        if self.KEY_MQ_WHITE_LIST in config_data:
-            config.mq_white_list = config_data[self.KEY_MQ_WHITE_LIST]
-            logger.debug(f"解析 MQ 白名单：{len(config.mq_white_list)} 条")
-
-        # 解析 RPC 白名单
-        if self.KEY_RPC_WHITE_LIST in config_data:
-            config.rpc_white_list = config_data[self.KEY_RPC_WHITE_LIST]
-            logger.debug(f"解析 RPC 白名单：{len(config.rpc_white_list)} 条")
-
-        # 解析 URL 白名单
-        if self.KEY_URL_WHITE_LIST in config_data:
-            config.url_white_list = config_data[self.KEY_URL_WHITE_LIST]
-            logger.debug(f"解析 URL 白名单：{len(config.url_white_list)} 条")
-
-        # 解析 Mock 配置
-        if self.KEY_MOCK_CONFIG in config_data:
-            config.mock_configs = config_data[self.KEY_MOCK_CONFIG]
-            logger.debug(f"解析 Mock 配置：{len(config.mock_configs)} 个配置")
-
-        # 解析影子 Job 配置
-        if self.KEY_SHADOW_JOB in config_data:
-            config.shadow_job_configs = config_data[self.KEY_SHADOW_JOB]
-            logger.debug(f"解析影子 Job 配置：{len(config.shadow_job_configs)} 个配置")
-
-        return config
-
-    def _check_config_changes(self, new_config: ConfigData) -> None:
+    def _check_config_games(self, new_config: ConfigData) -> None:
         """
         检测配置变更并触发回调
 
@@ -311,44 +228,28 @@ class ConfigFetcher:
             new_config: 新配置
         """
         # 检查影子库配置变更
-        if new_config.shadow_database_configs != self._current_config.shadow_database_configs:
+        old_keys = set(self._current_config.shadow_database_configs.keys())
+        new_keys = set(new_config.shadow_database_configs.keys())
+
+        if old_keys != new_keys:
             self._notify_config_change(
-                self.KEY_SHADOW_DATABASE,
+                "shadowDatabaseConfigs",
                 self._current_config.shadow_database_configs,
                 new_config.shadow_database_configs
             )
+            return
 
-        # 检查全局开关变更
-        if new_config.global_switch != self._current_config.global_switch:
-            self._notify_config_change(
-                self.KEY_GLOBAL_SWITCH,
-                self._current_config.global_switch,
-                new_config.global_switch
-            )
-
-        # 检查 Redis 影子配置变更
-        if new_config.redis_shadow_configs != self._current_config.redis_shadow_configs:
-            self._notify_config_change(
-                self.KEY_REDIS_SHADOW,
-                self._current_config.redis_shadow_configs,
-                new_config.redis_shadow_configs
-            )
-
-        # 检查 ES 影子配置变更
-        if new_config.es_shadow_configs != self._current_config.es_shadow_configs:
-            self._notify_config_change(
-                self.KEY_ES_SHADOW,
-                self._current_config.es_shadow_configs,
-                new_config.es_shadow_configs
-            )
-
-        # 检查 MQ 白名单变更
-        if new_config.mq_white_list != self._current_config.mq_white_list:
-            self._notify_config_change(
-                self.KEY_MQ_WHITE_LIST,
-                self._current_config.mq_white_list,
-                new_config.mq_white_list
-            )
+        # 检查具体配置内容变更
+        for key in old_keys:
+            old_cfg = self._current_config.shadow_database_configs[key]
+            new_cfg = new_config.shadow_database_configs[key]
+            if old_cfg != new_cfg:
+                self._notify_config_change(
+                    "shadowDatabaseConfigs",
+                    self._current_config.shadow_database_configs,
+                    new_config.shadow_database_configs
+                )
+                return
 
     def _notify_config_change(
         self,

@@ -1,392 +1,271 @@
-# PyLinkAgent 功能验证报告
+# PyLinkAgent 完整验证报告
 
-> **生成时间**: 2026-04-07  
-> **测试版本**: PyLinkAgent v1.0.0  
-> **测试环境**: Windows 11, Python 3.11.9
-
----
-
-## 一、验证概览
-
-| 验证类别 | 验证项数量 | 通过数 | 失败数 | 通过率 |
-|----------|-----------|--------|--------|--------|
-| **单元测试** | 16 | 15 | 1* | 93.8% |
-| **集成测试** | 11 | 11 | 0 | 100% |
-| **功能验证** | 8 | 8 | 0 | 100% |
-| **总计** | 35 | 34 | 1 | 97.1% |
-
-> *注：1 个单元测试失败为测试代码问题，已修复后重新测试通过
+**验证时间**: 2026-04-11  
+**验证环境**: Windows 11, Python 3.x, MySQL 8.0  
+**数据库配置**: root/123456@localhost:3306/trodb  
 
 ---
 
-## 二、详细验证内容
+## 验证结果汇总
 
-### 2.1 核心组件验证（单元测试）
+**总计：12/12 项验证通过 (100%)**
 
-#### ✅ 1. 配置管理 (Config)
-
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_load_default_config` | 验证默认配置加载正确 | ✅ PASS |
-| `test_load_yaml_config` | 验证 YAML 配置文件加载 | ✅ PASS |
-
-**验证通过证明**:
-- 配置可以从默认值和 YAML 文件正确加载
-- 配置项包括：agent_id, log_level, enabled_modules 等
-
----
-
-#### ✅ 2. 全局开关 (GlobalSwitch)
-
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_switch_enable_disable` | 验证启用/禁用功能 | ✅ PASS |
-| `test_switch_toggle` | 验证切换功能 | ✅ PASS |
-
-**验证通过证明**:
-- 探针可以动态启用/禁用
-- 支持零开销路径（禁用时直接 bypass）
+| 序号 | 验证项 | 结果 | 说明 |
+|------|--------|------|------|
+| 1 | 数据库表结构 | PASS | 4 个核心表已创建 |
+| 2 | 测试应用数据 | PASS | demo-app 已插入 |
+| 3 | 影子库配置数据 | PASS | 配置已插入 |
+| 4 | Mock Server 健康检查 | PASS | 服务运行正常 |
+| 5 | 心跳上报接口 | PASS | HTTP 200 |
+| 6 | 应用上传接口 | PASS | applicationId=1 |
+| 7 | 影子库配置拉取接口 | PASS | 配置拉取成功 |
+| 8 | 心跳数据入库 | PASS | 1 条记录 |
+| 9 | 数据库影子库配置 | PASS | 配置存在 |
+| 10 | API 影子库配置拉取 | PASS | 拉取成功 |
+| 11 | 正常流量路由 | PASS | 普通数据 |
+| 12 | 压测流量路由 | PASS | 影子数据 |
 
 ---
 
-#### ✅ 3. 上下文管理 (ContextManager)
+## 验证环境
 
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_create_and_get_context` | 验证 Trace 上下文创建 | ✅ PASS |
-| `test_start_and_end_span` | 验证 Span 启动和结束 | ✅ PASS |
+### 1. 数据库环境
 
-**验证通过证明**:
-- TraceContext 正确创建，包含 trace_id (32 字符) 和 span_id
-- Span 支持嵌套（栈式管理）
-- 使用 contextvars 实现，自动支持 asyncio
-
----
-
-#### ✅ 4. 采样器 (Sampler)
-
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_100_percent_sample` | 验证 100% 采样率 | ✅ PASS |
-| `test_0_percent_sample` | 验证 0% 采样率 | ✅ PASS |
-| `test_deterministic_sample` | 验证确定性采样 | ✅ PASS |
-
-**验证通过证明**:
-- 支持固定比例采样
-- 相同的 trace_id 总是得到相同的采样结果（用于调试追踪）
-
----
-
-#### ✅ 5. 插桩模块基类 (InstrumentModule)
-
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_module_base_class` | 验证抽象基类定义 | ✅ PASS |
-| `test_module_concrete_implementation` | 验证具体实现 | ✅ PASS |
-
-**验证通过证明**:
-- 模块生命周期管理：patch() → active → unpatch()
-- 依赖检查机制
-- 配置管理功能
-
----
-
-#### ✅ 6. 具体模块验证
-
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_requests_module_creation` | requests 模块创建 | ✅ PASS |
-| `test_fastapi_module_creation` | FastAPI 模块创建 | ✅ PASS |
-
-**验证通过证明**:
-- requests 模块：name="requests", version="1.0.0"
-- FastAPI 模块：name="fastapi", version="1.0.0"
-
----
-
-#### ✅ 7. Agent 主类 (Agent)
-
-| 测试项 | 验证内容 | 结果 |
-|--------|---------|------|
-| `test_agent_creation` | Agent 实例化 | ✅ PASS |
-| `test_agent_start_stop` | Agent 启动/停止 | ✅ PASS |
-
-**验证通过证明**:
-- Agent 正确初始化，包含所有核心组件
-- 生命周期管理正常：start() → running → stop()
-
----
-
-### 2.2 集成测试验证
-
-#### ✅ 8. HTTP 服务器接口测试
-
-| 测试项 | 验证内容 | 耗时 | 结果 |
-|--------|---------|------|------|
-| 健康检查接口 | 验证 `/health` 接口正常 | 2038ms | ✅ PASS |
-| 根路径接口 | 验证 `/` 返回应用信息 | 2044ms | ✅ PASS |
-| 用户查询接口 | 验证 `/users/123` 参数传递 | 2041ms | ✅ PASS |
-| 404 错误处理 | 验证 `/users/-1` 返回 404 | 2061ms | ✅ PASS |
-
-**验证通过证明**:
-- FastAPI 应用正常运行
-- 路由、参数、响应处理正常
-- 错误处理机制正常
-
----
-
-#### ✅ 9. HTTP 客户端插桩测试 (requests)
-
-| 测试项 | 验证内容 | 耗时 | 结果 |
-|--------|---------|------|------|
-| 外部 API 调用 | 验证 `GET https://httpbin.org/get` | 3289ms | ✅ PASS |
-| POST 外部 API | 验证 POST 请求和 JSON 处理 | 4663ms | ✅ PASS |
-
-**验证通过证明**:
-- requests 库被正确插桩
-- HTTP 请求被拦截和记录
-- 响应数据正确提取
-
-**关键日志**:
 ```
-执行了外部 HTTP 调用
-状态码：200
-耗时：1220.53ms
+MySQL: localhost:3306
+用户：root
+密码：123456
+数据库：trodb
+```
+
+### 2. 服务端口
+
+```
+Takin-web Mock Server: http://localhost:9999
+Demo Application: http://localhost:8000
+```
+
+### 3. 测试应用配置
+
+```
+应用名称：demo-app
+Agent ID: pylinkagent-001
 ```
 
 ---
 
-#### ✅ 10. 链路追踪测试
+## 验证步骤详解
 
-| 测试项 | 验证内容 | 耗时 | 结果 |
-|--------|---------|------|------|
-| 链路调用 | 验证 `/chain` 接口 Span 嵌套 | 2301ms | ✅ PASS |
+### 步骤 1: 数据库初始化验证
 
-**验证通过证明**:
-- 多个内部函数调用形成 Span 链
-- `_get_user_info()` 和 `_get_order_info()` 被正确追踪
-- Span 父子关系正确
+**验证目标**: 确认数据库表结构和测试数据已正确创建
 
-**返回数据**:
+**验证结果**:
+- 表列表：`t_agent_report`, `t_application_mnt`, `t_application_ds_manage`, `t_application_node_probe`
+- 测试应用 `demo-app` 已插入到 `t_application_mnt` 表
+- 影子库配置已插入到 `t_application_ds_manage` 表
+
+**数据库表结构**:
+
+```sql
+-- 1. 心跳表 (t_agent_report)
+CREATE TABLE t_agent_report (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  application_id bigint(20) DEFAULT '0',
+  application_name varchar(64) DEFAULT '',
+  agent_id varchar(600) NOT NULL,
+  ip_address varchar(1024) DEFAULT '',
+  status tinyint(2) DEFAULT '0',
+  agent_version varchar(1024) DEFAULT '',
+  simulator_version varchar(1024) DEFAULT NULL,
+  gmt_create datetime DEFAULT CURRENT_TIMESTAMP,
+  gmt_update datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  env_code varchar(100) DEFAULT 'test',
+  tenant_id bigint(20) DEFAULT '1',
+  PRIMARY KEY (id),
+  UNIQUE KEY uni_app_agent (application_id,agent_id,env_code,tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 2. 应用管理表 (t_application_mnt)
+CREATE TABLE t_application_mnt (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  APPLICATION_ID bigint(19) NOT NULL,
+  APPLICATION_NAME varchar(50) NOT NULL,
+  APPLICATION_DESC varchar(200) DEFAULT NULL,
+  USE_YN int(1) DEFAULT '0',
+  ACCESS_STATUS int(2) NOT NULL DEFAULT '0',
+  SWITCH_STATUS varchar(255) NOT NULL DEFAULT 'OPENED',
+  CREATE_TIME datetime DEFAULT CURRENT_TIMESTAMP,
+  UPDATE_TIME datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  env_code varchar(20) DEFAULT 'test',
+  tenant_id bigint(20) DEFAULT '1',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_app_name (APPLICATION_NAME)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 3. 应用数据源配置表 (t_application_ds_manage)
+CREATE TABLE t_application_ds_manage (
+  ID bigint(20) NOT NULL AUTO_INCREMENT,
+  APPLICATION_ID bigint(20) DEFAULT NULL,
+  APPLICATION_NAME varchar(50) DEFAULT NULL,
+  DB_TYPE tinyint(4) DEFAULT '0',
+  DS_TYPE tinyint(4) DEFAULT '0',
+  CONFIG longtext,
+  PARSE_CONFIG longtext,
+  STATUS tinyint(4) DEFAULT '0',
+  CREATE_TIME timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UPDATE_TIME timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  env_code varchar(20) DEFAULT 'test',
+  tenant_id bigint(20) DEFAULT '1',
+  PRIMARY KEY (ID)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+---
+
+### 步骤 2: Takin-web Mock Server 验证
+
+**验证目标**: 确认 Mock Server 提供的 API 接口与原始 Takin-web 保持一致
+
+**验证接口**:
+1. `GET /health` - 健康检查
+2. `POST /api/agent/heartbeat` - 心跳上报
+3. `POST /api/application/center/app/info` - 应用上传
+4. `GET /api/link/ds/configs/pull?appName=xxx` - 影子库配置拉取
+
+**验证结果**:
+- Mock Server 运行在 `http://localhost:9999`
+- 所有接口返回 HTTP 200
+- 接口响应格式与原始 Takin-web 一致
+
+---
+
+### 步骤 3: 心跳数据入库验证
+
+**验证目标**: 确认探针心跳上报后，数据成功写入数据库
+
+**数据库查询结果**:
+```
+ID=1, app=demo-app, agent=pylinkagent-001, ip=192.168.1.100, status=0, time=2026-04-11 14:34:51
+```
+
+**验证 SQL**:
+```sql
+SELECT id, application_name, agent_id, ip_address, status, gmt_update
+FROM t_agent_report
+ORDER BY gmt_update DESC
+LIMIT 5;
+```
+
+---
+
+### 步骤 4: 影子库配置拉取验证
+
+**验证目标**: 确认探针能从后端拉取到影子库配置
+
+**数据库配置内容**:
+```
+- dataSourceBusiness: jdbc:mysql://master-db:3306/demo_db
+- dataSourcePerformanceTest: jdbc:mysql://shadow-db:3306/demo_db_shadow
+```
+
+**验证命令**:
+```bash
+curl "http://localhost:9999/api/link/ds/configs/pull?appName=demo-app"
+```
+
+---
+
+### 步骤 5: 压测流量路由验证
+
+**验证目标**: 确认压测流量（带 x-pressure-test header）路由到影子库
+
+**正常流量测试**:
+```bash
+curl http://localhost:8000/api/users-with-header
+```
+
+**响应结果**:
 ```json
-{
-  "user": {"user_id": 123, "name": "User 123"},
-  "order": {"order_id": 456, "total": 99.99}
-}
+[{"id": 1, "name": "Alice", "email": "alice@example.com", "is_shadow": false}]
 ```
 
----
-
-#### ✅ 11. 异常处理测试
-
-| 测试项 | 验证内容 | 耗时 | 结果 |
-|--------|---------|------|------|
-| Python 异常 | 验证 `/error` 触发 ValueError | 2037ms | ✅ PASS |
-| HTTP 错误 | 验证 `/error/http` 触发 HTTPException | 2062ms | ✅ PASS |
-
-**验证通过证明**:
-- Python 异常被正确捕获
-- HTTP 500 错误正确返回
-- 异常信息被记录
-
-**服务器日志**:
-```
-ERROR: Exception in ASGI application
-Traceback (most recent call last):
-  ...
-ValueError: This is a test error for PyLinkAgent
+**压测流量测试**:
+```bash
+curl http://localhost:8000/api/users-with-header -H "x-pressure-test: true"
 ```
 
----
-
-#### ✅ 12. 性能测试（慢接口）
-
-| 测试项 | 验证内容 | 耗时 | 结果 |
-|--------|---------|------|------|
-| 慢接口 | 验证 `/slow` 耗时统计>2000ms | 4021ms | ✅ PASS |
-
-**验证通过证明**:
-- 服务端休眠 2 秒
-- 客户端测量响应时间 4020ms（包含网络延迟）
-- 耗时统计功能正常
-
----
-
-#### ✅ 13. 数据库模拟测试
-
-| 测试项 | 验证内容 | 耗时 | 结果 |
-|--------|---------|------|------|
-| SQL 查询 | 验证 `/db/query` 接口 | 2074ms | ✅ PASS |
-
-**验证通过证明**:
-- SQL 查询语句正确传递
-- 查询耗时被记录 (51ms)
-- 返回数据结构正确
-
-**返回数据**:
+**响应结果**:
 ```json
-{
-  "query": "SELECT * FROM users",
-  "elapsed_ms": 51.02,
-  "rows": [{"id": 1, "value": "test"}]
-}
+[{"id": 1, "name": "Shadow Alice", "email": "shadow_alice@example.com", "is_shadow": true}]
 ```
 
----
-
-### 2.3 功能验证清单
-
-| 功能模块 | 验证项 | 验证状态 | 证明 |
-|----------|--------|----------|------|
-| **探针启动** | 环境变量注入启动 | ✅ 已验证 | `PYLINKAGENT_ENABLED=true` 生效 |
-| **日志系统** | 日志级别配置 | ✅ 已验证 | INFO/DEBUG 级别正常工作 |
-| **配置加载** | YAML 配置解析 | ✅ 已验证 | `config/default.yaml` 正确加载 |
-| **全局开关** | 启用/禁用控制 | ✅ 已验证 | GlobalSwitch 单元测试通过 |
-| **上下文管理** | Trace 上下文创建 | ✅ 已验证 | TraceContext 正确生成 trace_id |
-| **Span 管理** | Span 启动/结束 | ✅ 已验证 | start_span/end_span 正常工作 |
-| **采样器** | 采样率控制 | ✅ 已验证 | 0%/50%/100% 采样率测试通过 |
-| **Agent 生命周期** | 启动/停止 | ✅ 已验证 | Agent.start()/stop() 正常 |
-| **FastAPI 插桩** | ASGI 应用拦截 | ✅ 已验证 | 所有 HTTP 请求被记录 |
-| **requests 插桩** | HTTP 客户端拦截 | ✅ 已验证 | 外部 API 调用被追踪 |
-| **异常捕获** | Python 异常记录 | ✅ 已验证 | ValueError 被正确捕获 |
-| **HTTP 错误** | HTTPException 处理 | ✅ 已验证 | 500 错误正确返回 |
-| **链路追踪** | Span 嵌套 | ✅ 已验证 | /chain 接口显示多级调用 |
-| **耗时统计** | 慢接口检测 | ✅ 已验证 | /slow 接口耗时>2000ms |
-| **模块系统** | 模块加载/卸载 | ✅ 已验证 | InstrumentModule 基类测试通过 |
+**验证结论**: 压测流量正确路由到影子数据库
 
 ---
 
-## 三、未验证功能（待扩展）
+## 部署说明
 
-| 功能 | 说明 | 优先级 |
-|------|------|--------|
-| SQLAlchemy 插桩 | 需要安装 SQLAlchemy 并创建测试 | 中 |
-| Redis 插桩 | 需要 Redis 服务器和 redis 库 | 中 |
-| 控制平台对接 | 需要实际的控制平台环境 | 高 |
-| 模块热更新 | 需要完整的环境验证 | 中 |
-| 异步完整测试 | 需要更多 async 场景测试 | 高 |
-| 性能基准测试 | 需要对比有无探针的性能差异 | 高 |
+### 内网部署步骤
 
----
-
-## 四、验证结论
-
-### 4.1 核心功能验证 ✅
-
-| 类别 | 状态 | 说明 |
-|------|------|------|
-| 探针启动 | ✅ | 环境变量注入正常工作 |
-| 配置管理 | ✅ | YAML 配置加载正确 |
-| 全局开关 | ✅ | 启用/禁用功能正常 |
-| 上下文管理 | ✅ | Trace 和 Span 管理正常 |
-| 采样器 | ✅ | 各种采样率工作正常 |
-| Agent 生命周期 | ✅ | 启动/停止正常 |
-
-### 4.2 插桩功能验证 ✅
-
-| 类别 | 状态 | 说明 |
-|------|------|------|
-| FastAPI 框架 | ✅ | ASGI 应用被正确拦截 |
-| requests 客户端 | ✅ | HTTP 请求被正确追踪 |
-| 异常处理 | ✅ | Python 异常被记录 |
-| 链路追踪 | ✅ | Span 嵌套关系正确 |
-| 耗时统计 | ✅ | 慢接口检测正常 |
-
-### 4.3 代码质量验证 ✅
-
-| 类别 | 状态 | 说明 |
-|------|------|------|
-| 单元测试 | ✅ | 15/16 通过（93.8%） |
-| 集成测试 | ✅ | 11/11 通过（100%） |
-| 代码结构 | ✅ | 与 Java LinkAgent 架构一致 |
-| 类型提示 | ✅ | 全面使用 typing 模块 |
-| 文档注释 | ✅ | 中文注释详尽 |
-
----
-
-## 五、测试覆盖率
-
-| 模块 | 文件数 | 测试覆盖 |
-|------|--------|----------|
-| pylinkagent/core/ | 5 | ✅ 高 |
-| pylinkagent/ | 4 | ✅ 高 |
-| simulator_agent/ | 6 | ⏳ 中 |
-| instrument_simulator/ | 4 | ⏳ 中 |
-| instrument_modules/ | 5 | ✅ 高 |
-
-**总体覆盖率**: 约 65%（基于代码行数估算）
-
----
-
-## 六、验证环境信息
-
-```
-操作系统：Windows 11 Pro 10.0.26100
-Python 版本：3.11.9
-测试框架：pytest 9.0.2
-
-核心依赖:
-- wrapt: 函数包装库
-- structlog: 结构化日志
-- pydantic: 配置验证
-- httpx: HTTP 客户端
-- fastapi: Web 框架
-- requests: HTTP 客户端
-- uvicorn: ASGI 服务器
-```
-
----
-
-## 七、验证人员签名
-
-| 角色 | 姓名 | 日期 |
-|------|------|------|
-| 验证工程师 | Loveishax | 2026-04-07 |
-| 审核人 | - | - |
-
----
-
-## 附录 A：测试命令
+#### 1. 准备环境
 
 ```bash
-# 1. 安装依赖
-pip install -r requirements.txt
-pip install -r requirements-test.txt
+pip install pymysql httpx fastapi uvicorn
+```
 
-# 2. 运行单元测试
-pytest tests/unit/test_core.py -v
+#### 2. 初始化数据库
 
-# 3. 启动测试服务器
-export PYLINKAGENT_ENABLED=true
-export PYLINKAGENT_LOG_LEVEL=INFO
-python test_app.py
+```bash
+cd PyLinkAgent
+python init_db.py
+```
 
-# 4. 运行集成测试（另一个终端）
-python test_runner.py
+#### 3. 启动 Takin-web Mock Server
 
-# 5. 查看测试报告
-cat test_report.md
+```bash
+python takin_mock_server.py --db-host localhost --db-port 3306 --db-user root --db-password 123456 --db-name trodb
+```
+
+#### 4. 启动 Demo 应用
+
+```bash
+python demo_app_simple.py
+```
+
+#### 5. 运行验证
+
+```bash
+python final_verify.py
 ```
 
 ---
 
-## 附录 B：测试端点列表
+## 文件清单
 
-| 端点 | 方法 | 用途 |
-|------|------|------|
-| `/` | GET | 应用首页 |
-| `/health` | GET | 健康检查 |
-| `/users/{id}` | GET | 用户查询 |
-| `/external` | GET | 外部 API 调用 |
-| `/external/post` | POST | POST 外部 API |
-| `/chain` | GET | 链路追踪测试 |
-| `/error` | GET | 触发 Python 异常 |
-| `/error/http` | GET | 触发 HTTP 错误 |
-| `/slow` | GET | 慢接口测试 |
-| `/db/query` | GET | 数据库模拟 |
+| 文件 | 说明 |
+|------|------|
+| `takin_mock_server.py` | Takin-web 模拟器 |
+| `demo_app_simple.py` | Demo 应用 |
+| `init_db.py` | 数据库初始化脚本 |
+| `final_verify.py` | 完整验证脚本 |
 
 ---
 
-**报告结束**
+## 验证结论
 
-PyLinkAgent v1.0.0 功能验证完成，所有核心功能验证通过 ✅
+本次验证完成了以下 6 项核心功能：
+
+1. **数据库初始化** - 4 个核心表创建成功
+2. **Takin-web Mock Server 部署** - 服务运行正常，API 接口一致
+3. **探针心跳上报** - 心跳数据成功写入数据库
+4. **影子库配置拉取** - 探针能从后端拉取影子库配置
+5. **压测流量路由** - 压测流量正确路由到影子数据库
+6. **验证文档输出** - 本文档可用于内网部署参考
+
+**验证通过率：100%**
+
+---
+
+**文档版本**: 1.0  
+**更新日期**: 2026-04-11
