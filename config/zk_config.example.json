@@ -1,0 +1,14 @@
+{
+  "zk_servers": "7.198.155.26:2181,7.198.153.71:2181,7.198.152.234:2181",
+  "app_name": "my-app",
+  "agent_id": "",
+  "env_code": "test",
+  "tenant_id": "1",
+  "user_id": "",
+  "tenant_app_key": "",
+  "agent_version": "1.0.0",
+  "simulator_version": "1.0.0",
+  "tro_web_url": "http://localhost:9999",
+  "connection_timeout_ms": 60000,
+  "session_timeout_ms": 60000
+}

@@ -14,6 +14,13 @@ from .external_api import ExternalAPI, CommandPacket, HeartRequest
 from .heartbeat import HeartbeatReporter, AgentStatus
 from .command_poller import CommandPoller, CommandExecutor
 from .config_fetcher import ConfigFetcher, ConfigData
+from .zk_integration import (
+    ZKIntegration,
+    get_integration,
+    reset_integration,
+    initialize_zk,
+    shutdown_zk,
+)
 
 __all__ = [
     "ExternalAPI",
@@ -25,4 +32,10 @@ __all__ = [
     "CommandExecutor",
     "ConfigFetcher",
     "ConfigData",
+    # ZooKeeper 集成
+    "ZKIntegration",
+    "get_integration",
+    "reset_integration",
+    "initialize_zk",
+    "shutdown_zk",
 ]

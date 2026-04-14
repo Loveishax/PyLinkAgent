@@ -28,3 +28,6 @@ elasticsearch7>=7.0.0   # Elasticsearch 客户端
 # 可选依赖
 packaging>=23.0         # 版本检查
 psutil>=5.9.0           # 系统指标采集
+
+# ZooKeeper 支持 (P0 功能)
+kazoo>=2.9.0            # ZooKeeper 客户端

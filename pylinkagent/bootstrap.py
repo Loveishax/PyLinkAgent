@@ -1,0 +1,279 @@
+"""
+PyLinkAgent 主启动器
+
+整合 HTTP 心跳和 ZooKeeper 心跳，提供完整的 Agent 启动流程
+"""
+
+import os
+import sys
+import time
+import signal
+import logging
+from typing import Optional
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+
+class PyLinkAgentBootstrapper:
+    """
+    PyLinkAgent 启动器
+
+    负责初始化和管理 Agent 的完整生命周期
+    """
+
+    def __init__(self):
+        """初始化启动器"""
+        self._external_api = None
+        self._config_fetcher = None
+        self._heartbeat_reporter = None
+        self._command_poller = None
+        self._zk_integration = None
+        self._is_running = False
+        self._shutdown_hooks = []
+
+    def bootstrap(self) -> bool:
+        """
+        启动 Agent
+
+        Returns:
+            bool: 启动成功返回 True
+        """
+        logger.info("=" * 60)
+        logger.info("PyLinkAgent 启动中...")
+        logger.info("=" * 60)
+
+        try:
+            # 1. 初始化 HTTP ExternalAPI
+            if not self._init_external_api():
+                logger.error("HTTP ExternalAPI 初始化失败")
+                return False
+
+            # 2. 初始化 ZooKeeper (P0 任务)
+            self._init_zookeeper()
+
+            # 3. 启动配置拉取器
+            if not self._start_config_fetcher():
+                logger.warning("配置拉取器启动失败，继续启动")
+
+            # 4. 启动心跳上报 (HTTP)
+            if not self._start_heartbeat_reporter():
+                logger.error("心跳上报启动失败")
+                return False
+
+            # 5. 启动命令轮询器
+            if not self._start_command_poller():
+                logger.warning("命令轮询器启动失败，继续启动")
+
+            # 6. 注册关闭钩子
+            self._register_shutdown_hooks()
+
+            self._is_running = True
+            logger.info("=" * 60)
+            logger.info("PyLinkAgent 启动完成")
+            logger.info(f"  HTTP 心跳：启用")
+            logger.info(f"  ZK 心跳：{'启用' if self._zk_integration and self._zk_integration.is_running() else '未启用'}")
+            logger.info("=" * 60)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"PyLinkAgent 启动失败：{e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _init_external_api(self) -> bool:
+        """初始化 ExternalAPI"""
+        from .controller import ExternalAPI
+
+        tro_web_url = os.getenv('MANAGEMENT_URL', 'http://localhost:9999')
+        app_name = os.getenv('APP_NAME', 'default-app')
+        agent_id = os.getenv('AGENT_ID', f'pylinkagent-{os.getpid()}')
+
+        logger.info(f"初始化 ExternalAPI:")
+        logger.info(f"  控制台地址：{tro_web_url}")
+        logger.info(f"  应用名称：{app_name}")
+        logger.info(f"  Agent ID: {agent_id}")
+
+        self._external_api = ExternalAPI(
+            tro_web_url=tro_web_url,
+            app_name=app_name,
+            agent_id=agent_id,
+        )
+
+        return self._external_api.initialize()
+
+    def _init_zookeeper(self) -> None:
+        """初始化 ZooKeeper 集成"""
+        from .controller import initialize_zk, get_integration
+
+        logger.info("初始化 ZooKeeper 集成...")
+
+        if initialize_zk():
+            self._zk_integration = get_integration()
+            logger.info("  ZooKeeper 集成已启用")
+        else:
+            logger.info("  ZooKeeper 集成未启用 (降级到 HTTP-only 模式)")
+
+    def _start_config_fetcher(self) -> bool:
+        """启动配置拉取器"""
+        from .controller import ConfigFetcher
+
+        if not self._external_api:
+            return False
+
+        interval = int(os.getenv('CONFIG_FETCH_INTERVAL', '60'))
+
+        logger.info(f"启动配置拉取器 (间隔：{interval}秒)")
+
+        self._config_fetcher = ConfigFetcher(self._external_api, interval=interval)
+        return self._config_fetcher.start()
+
+    def _start_heartbeat_reporter(self) -> bool:
+        """启动心跳上报器"""
+        from .controller import HeartbeatReporter
+
+        if not self._external_api:
+            return False
+
+        interval = int(os.getenv('HEARTBEAT_INTERVAL', '60'))
+
+        logger.info(f"启动 HTTP 心跳上报 (间隔：{interval}秒)")
+
+        self._heartbeat_reporter = HeartbeatReporter(
+            self._external_api,
+            interval=interval
+        )
+        return self._heartbeat_reporter.start()
+
+    def _start_command_poller(self) -> bool:
+        """启动命令轮询器"""
+        from .controller import CommandPoller
+
+        if not self._external_api:
+            return False
+
+        interval = int(os.getenv('COMMAND_POLL_INTERVAL', '30'))
+
+        logger.info(f"启动命令轮询 (间隔：{interval}秒)")
+
+        self._command_poller = CommandPoller(
+            self._external_api,
+            interval=interval
+        )
+        return self._command_poller.start()
+
+    def _register_shutdown_hooks(self) -> None:
+        """注册关闭钩子"""
+        def signal_handler(signum, frame):
+            logger.info(f"收到信号：{signum}")
+            self.shutdown()
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        import atexit
+        atexit.register(self.shutdown)
+
+        logger.info("已注册关闭钩子")
+
+    def shutdown(self) -> None:
+        """关闭 Agent"""
+        if not self._is_running:
+            return
+
+        logger.info("=" * 60)
+        logger.info("PyLinkAgent 关闭中...")
+        logger.info("=" * 60)
+
+        self._is_running = False
+
+        # 1. 停止 HTTP 心跳
+        if self._heartbeat_reporter:
+            self._heartbeat_reporter.stop()
+            logger.info("  HTTP 心跳已停止")
+
+        # 2. 停止配置拉取
+        if self._config_fetcher:
+            self._config_fetcher.stop()
+            logger.info("  配置拉取已停止")
+
+        # 3. 停止命令轮询
+        if self._command_poller:
+            self._command_poller.stop()
+            logger.info("  命令轮询已停止")
+
+        # 4. 关闭 ZooKeeper (如果启用)
+        if self._zk_integration:
+            from .controller import shutdown_zk
+            shutdown_zk()
+            logger.info("  ZooKeeper 已关闭")
+
+        # 5. 关闭 ExternalAPI
+        if self._external_api:
+            self._external_api.shutdown()
+            logger.info("  ExternalAPI 已关闭")
+
+        logger.info("=" * 60)
+        logger.info("PyLinkAgent 已关闭")
+        logger.info("=" * 60)
+
+    def wait(self) -> None:
+        """等待 Agent 关闭"""
+        if not self._is_running:
+            return
+
+        logger.info("Agent 运行中... (Ctrl+C 停止)")
+
+        try:
+            while self._is_running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("收到中断信号")
+        finally:
+            self.shutdown()
+
+
+# ==================== 全局启动器 ====================
+
+_global_bootstrapper: Optional[PyLinkAgentBootstrapper] = None
+
+
+def bootstrap() -> PyLinkAgentBootstrapper:
+    """
+    启动 PyLinkAgent
+
+    Returns:
+        PyLinkAgentBootstrapper 实例
+    """
+    global _global_bootstrapper
+
+    if _global_bootstrapper is None:
+        _global_bootstrapper = PyLinkAgentBootstrapper()
+        _global_bootstrapper.bootstrap()
+
+    return _global_bootstrapper
+
+
+def shutdown() -> None:
+    """关闭 PyLinkAgent"""
+    global _global_bootstrapper
+
+    if _global_bootstrapper:
+        _global_bootstrapper.shutdown()
+        _global_bootstrapper = None
+
+
+def is_running() -> bool:
+    """检查 Agent 是否运行"""
+    return _global_bootstrapper is not None and _global_bootstrapper._is_running
+
+
+def get_bootstrapper() -> Optional[PyLinkAgentBootstrapper]:
+    """获取全局启动器实例"""
+    return _global_bootstrapper
