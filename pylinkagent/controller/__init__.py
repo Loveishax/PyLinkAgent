@@ -21,6 +21,11 @@ from .zk_integration import (
     initialize_zk,
     shutdown_zk,
 )
+from .application_register import (
+    ApplicationRegistrator,
+    ApplicationStatusReporter,
+    ApplicationInfo,
+)
 
 __all__ = [
     "ExternalAPI",
@@ -38,4 +43,8 @@ __all__ = [
     "reset_integration",
     "initialize_zk",
     "shutdown_zk",
+    # 应用注册
+    "ApplicationRegistrator",
+    "ApplicationStatusReporter",
+    "ApplicationInfo",
 ]

@@ -33,6 +33,7 @@ class PyLinkAgentBootstrapper:
         self._heartbeat_reporter = None
         self._command_poller = None
         self._zk_integration = None
+        self._app_registrator = None
         self._is_running = False
         self._shutdown_hooks = []
 
@@ -53,23 +54,26 @@ class PyLinkAgentBootstrapper:
                 logger.error("HTTP ExternalAPI 初始化失败")
                 return False
 
-            # 2. 初始化 ZooKeeper (P0 任务)
+            # 2. 应用自动注册 (P0 任务)
+            self._register_application()
+
+            # 3. 初始化 ZooKeeper (P0 任务)
             self._init_zookeeper()
 
-            # 3. 启动配置拉取器
+            # 4. 启动配置拉取器
             if not self._start_config_fetcher():
                 logger.warning("配置拉取器启动失败，继续启动")
 
-            # 4. 启动心跳上报 (HTTP)
+            # 5. 启动心跳上报 (HTTP)
             if not self._start_heartbeat_reporter():
                 logger.error("心跳上报启动失败")
                 return False
 
-            # 5. 启动命令轮询器
+            # 6. 启动命令轮询器
             if not self._start_command_poller():
                 logger.warning("命令轮询器启动失败，继续启动")
 
-            # 6. 注册关闭钩子
+            # 7. 注册关闭钩子
             self._register_shutdown_hooks()
 
             self._is_running = True
@@ -77,6 +81,7 @@ class PyLinkAgentBootstrapper:
             logger.info("PyLinkAgent 启动完成")
             logger.info(f"  HTTP 心跳：启用")
             logger.info(f"  ZK 心跳：{'启用' if self._zk_integration and self._zk_integration.is_running() else '未启用'}")
+            logger.info(f"  应用注册：{'已注册' if self._app_registrator and self._app_registrator.is_registered() else '跳过'}")
             logger.info("=" * 60)
 
             return True
@@ -107,6 +112,27 @@ class PyLinkAgentBootstrapper:
         )
 
         return self._external_api.initialize()
+
+    def _register_application(self) -> None:
+        """注册应用 (P0 任务：应用自动注册)"""
+        from .controller import ApplicationRegistrator
+
+        # 检查是否启用应用注册
+        auto_register = os.getenv('AUTO_REGISTER_APP', 'true').lower() == 'true'
+        if not auto_register:
+            logger.info("应用自动注册已禁用 (AUTO_REGISTER_APP=false)")
+            return
+
+        logger.info("注册应用...")
+
+        try:
+            self._app_registrator = ApplicationRegistrator(self._external_api)
+            if self._app_registrator.register():
+                logger.info("  应用注册成功")
+            else:
+                logger.warning("  应用注册失败，继续启动 (可能需要在控制台手动创建应用)")
+        except Exception as e:
+            logger.warning(f"  应用注册异常：{e}")
 
     def _init_zookeeper(self) -> None:
         """初始化 ZooKeeper 集成"""
