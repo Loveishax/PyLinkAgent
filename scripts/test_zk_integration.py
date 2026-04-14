@@ -10,7 +10,14 @@ import time
 import logging
 
 # 添加项目路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(script_dir, '..'))
+
+# 设置控制台编码为 UTF-8
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from pylinkagent.zookeeper import (
     ZkConfig,
@@ -52,7 +59,7 @@ def test_zk_config():
 
     assert config.zk_servers, "ZK 服务器地址不能为空"
     assert config.app_name, "应用名称不能为空"
-    print("✓ ZK 配置加载成功")
+    print("[OK] ZK 配置加载成功")
     return config
 
 
@@ -63,35 +70,35 @@ def test_zk_client(config: ZkConfig):
     try:
         client = create_client(config)
         if client.connect():
-            print(f"✓ ZK 连接成功：{config.zk_servers}")
+            print(f"[OK] ZK 连接成功：{config.zk_servers}")
             print(f"  连接状态：{client.get_state().value}")
 
             # 测试创建节点
             test_path = "/test/pylinkagent/connection_test"
             if client.ensure_path_exists("/test/pylinkagent"):
-                print(f"✓ 父路径创建成功：/test/pylinkagent")
+                print(f"[OK] 父路径创建成功：/test/pylinkagent")
 
             if client.create(test_path, b'test_data', ephemeral=True):
-                print(f"✓ 临时节点创建成功：{test_path}")
+                print(f"[OK] 临时节点创建成功：{test_path}")
 
             # 测试获取数据
             data = client.get(test_path)
             if data == b'test_data':
-                print(f"✓ 节点数据读取成功：{data}")
+                print(f"[OK] 节点数据读取成功：{data}")
 
             # 测试删除节点
             if client.delete(test_path):
-                print(f"✓ 节点删除成功：{test_path}")
+                print(f"[OK] 节点删除成功：{test_path}")
 
             client.disconnect()
-            print("✓ ZK 连接已断开")
+            print("[OK] ZK 连接已断开")
             return True
         else:
-            print("✗ ZK 连接失败")
+            print("[FAIL] ZK 连接失败")
             return False
 
     except Exception as e:
-        print(f"✗ ZK 客户端测试失败：{e}")
+        print(f"[FAIL] ZK 客户端测试失败：{e}")
         return False
 
 
@@ -107,9 +114,9 @@ def test_heartbeat_manager(config: ZkConfig):
 
         # 初始化
         if not manager.initialize():
-            print("✗ 心跳管理器初始化失败")
+            print("[FAIL] 心跳管理器初始化失败")
             return False
-        print("✓ 心跳管理器初始化成功")
+        print("[OK] 心跳管理器初始化成功")
 
         # 设置 Simulator 信息
         manager.set_simulator_info(
@@ -118,17 +125,17 @@ def test_heartbeat_manager(config: ZkConfig):
             md5="test_md5_123456",
             jars=["middleware-1.0.jar", "pradar-1.0.jar"]
         )
-        print("✓ Simulator 信息已设置")
+        print("[OK] Simulator 信息已设置")
 
         # 启动
         if not manager.start():
-            print("✗ 心跳管理器启动失败")
+            print("[FAIL] 心跳管理器启动失败")
             return False
-        print("✓ 心跳管理器启动成功")
+        print("[OK] 心跳管理器启动成功")
 
         # 更新状态
         manager.update_status(AgentStatus.RUNNING)
-        print("✓ 状态更新为 RUNNING")
+        print("[OK] 状态更新为 RUNNING")
 
         # 等待心跳刷新
         print("等待 35 秒观察心跳刷新...")
@@ -136,18 +143,18 @@ def test_heartbeat_manager(config: ZkConfig):
 
         # 检查节点是否存活
         if manager._heartbeat_node and manager._heartbeat_node.is_alive():
-            print("✓ 心跳节点存活")
+            print("[OK] 心跳节点存活")
         else:
-            print("✗ 心跳节点不存活")
+            print("[FAIL] 心跳节点不存活")
 
         # 停止
         manager.stop()
-        print("✓ 心跳管理器已停止")
+        print("[OK] 心跳管理器已停止")
 
         return True
 
     except Exception as e:
-        print(f"✗ 心跳管理器测试失败：{e}")
+        print(f"[FAIL] 心跳管理器测试失败：{e}")
         import traceback
         traceback.print_exc()
         return False
@@ -163,26 +170,26 @@ def test_integration():
 
         # 初始化并启动
         if initialize_zk():
-            print("✓ ZK 集成启动成功")
+            print("[OK] ZK 集成启动成功")
 
             integration = get_integration()
 
             # 检查状态
             if integration.is_running():
-                print("✓ ZK 心跳运行中")
+                print("[OK] ZK 心跳运行中")
             else:
-                print("✗ ZK 心跳未运行")
+                print("[FAIL] ZK 心跳未运行")
 
             # 设置 Simulator 信息
             integration.set_simulator_info(
                 service="http://127.0.0.1:8080",
                 port=8080
             )
-            print("✓ Simulator 信息已设置")
+            print("[OK] Simulator 信息已设置")
 
             # 更新状态
             integration.update_status(AgentStatus.RUNNING)
-            print("✓ 状态已更新")
+            print("[OK] 状态已更新")
 
             # 等待观察
             print("等待 10 秒观察...")
@@ -190,15 +197,15 @@ def test_integration():
 
             # 关闭
             shutdown_zk()
-            print("✓ ZK 集成已关闭")
+            print("[OK] ZK 集成已关闭")
 
             return True
         else:
-            print("✗ ZK 集成启动失败 (可能 ZK 不可用)")
+            print("[WARN] ZK 集成启动失败 (可能 ZK 不可用)")
             return False
 
     except Exception as e:
-        print(f"✗ ZK 集成测试失败：{e}")
+        print(f"[FAIL] ZK 集成测试失败：{e}")
         import traceback
         traceback.print_exc()
         return False
@@ -220,7 +227,7 @@ def main():
 
     # 2. 测试客户端连接
     if not test_zk_client(config):
-        print("\n⚠ ZK 客户端连接失败，跳过后续测试")
+        print("\n[WARN] ZK 客户端连接失败，跳过后续测试")
         print("请确保 ZooKeeper 服务可用:")
         print(f"  地址：{config.zk_servers}")
         return

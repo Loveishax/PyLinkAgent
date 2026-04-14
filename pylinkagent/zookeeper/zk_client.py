@@ -15,7 +15,12 @@ import logging
 
 try:
     from kazoo.client import KazooClient, KazooState
-    from kazoo.exceptions import KeeperException, NoNodeError
+    from kazoo.exceptions import (
+        KazooException,
+        NoNodeError,
+        NodeExistsError,
+        NoChildrenForEphemeralsError,
+    )
     from kazoo.handlers.threading import SequentialThreadingHandler
     from kazoo.recipe.watchers import ChildrenWatch, DataWatch
     KAZOO_AVAILABLE = True
@@ -91,9 +96,9 @@ class ZkClient:
 
             try:
                 # 创建 KazooClient
+                # 注意：kazoo 的 timeout 参数同时用于连接超时和会话超时
                 self._client = KazooClient(
                     hosts=self.config.zk_servers,
-                    connection_timeout=self.config.connection_timeout_ms / 1000.0,
                     timeout=self.config.session_timeout_ms / 1000.0,
                     handler=SequentialThreadingHandler(),
                     read_only=False,
@@ -208,11 +213,10 @@ class ZkClient:
             return False
 
         try:
-            create_func = self._client.Ephemeral if ephemeral else self._client.create
             self._client.create(path, data, ephemeral=ephemeral, makepath=make_parent_dirs)
             logger.info(f"ZK 节点创建成功：{path}")
             return True
-        except KeeperException.NodeExistsError:
+        except NodeExistsError:
             logger.debug(f"节点已存在：{path}")
             return True  # 节点已存在也算成功
         except Exception as e:
