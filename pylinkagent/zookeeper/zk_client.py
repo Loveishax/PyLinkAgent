@@ -82,9 +82,6 @@ class ZkClient:
     def connect(self) -> bool:
         """
         连接到 ZooKeeper
-
-        Returns:
-            bool: 连接成功返回 True
         """
         if self._connected:
             logger.debug("ZK 已连接")
@@ -96,7 +93,6 @@ class ZkClient:
 
             try:
                 # 创建 KazooClient
-                # 注意：kazoo 的 timeout 参数同时用于连接超时和会话超时
                 self._client = KazooClient(
                     hosts=self.config.zk_servers,
                     timeout=self.config.session_timeout_ms / 1000.0,
@@ -104,15 +100,17 @@ class ZkClient:
                     read_only=False,
                 )
 
-                # 添加状态监听器
+                # 添加状态监听器（必须在 start 之前）
                 self._client.add_listener(self._connection_listener)
 
-                # 启动连接
-                self._client.start()
+                # 【关键修复】使用 start(timeout) 同步等待连接
+                # 这是 Kazoo 官方推荐做法，不会再出现 connected.wait
+                self._client.start(timeout=self.config.connection_timeout_ms / 1000.0)
 
-                # 等待连接
-                if not self._client.connected.wait(timeout=self.config.connection_timeout_ms / 1000.0):
+                # 启动完成后立即检查（connected 已经是 bool 属性）
+                if not self._client.connected:
                     logger.error("ZK 连接超时")
+                    self._connected = False
                     return False
 
                 self._connected = True
@@ -144,7 +142,12 @@ class ZkClient:
 
     def is_connected(self) -> bool:
         """检查是否已连接"""
-        return self._connected and self._client and self._client.connected.is_set()
+        # 去掉 .is_set()，直接使用 property（它就是 bool）
+        return (
+            self._connected
+            and self._client is not None
+            and self._client.connected   # ← 这里改成直接判断
+        )
 
     def get_state(self) -> ConnectionState:
         """获取当前连接状态"""
@@ -314,8 +317,8 @@ class ZkClient:
             if stat:
                 return ZkNodeStat(
                     version=stat.version,
-                    ephemeral_owner=stat.ephemeral_owner,
-                    data_len=stat.data_len,
+                    ephemeral_owner=stat.ephemeralOwner,  # ← 这里改成 ephemeralOwner
+                    data_len=stat.dataLength,  # ← 这里改成 dataLength
                     ctime=stat.ctime,
                     mtime=stat.mtime,
                 )

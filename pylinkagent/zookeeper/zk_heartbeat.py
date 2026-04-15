@@ -6,6 +6,7 @@ PyLinkAgent ZooKeeper 心跳节点管理
 
 import json
 import threading
+import platform
 import time
 import socket
 import os
@@ -536,7 +537,8 @@ class ZkHeartbeatManager:
     def _get_heartbeat_data(self) -> bytes:
         """获取心跳数据"""
         # 从配置填充数据
-        self._heartbeat_data.address = socket.gethostbyname(socket.gethostname()) if socket.gethostname() else "127.0.0.1"
+        self._heartbeat_data.address = socket.gethostbyname(
+            socket.gethostname()) if socket.gethostname() else "127.0.0.1"
         self._heartbeat_data.host = socket.gethostname()
         self._heartbeat_data.name = os.path.basename(os.getcwd())
         self._heartbeat_data.pid = str(os.getpid())
@@ -544,7 +546,10 @@ class ZkHeartbeatManager:
         self._heartbeat_data.agent_language = "PYTHON"
         self._heartbeat_data.agent_version = self.config.agent_version
         self._heartbeat_data.simulator_version = self.config.simulator_version
-        self._heartbeat_data.jdk_version = f"Python {os.python_version()}"
+
+        # 【修复1】Python 版本获取方式
+        self._heartbeat_data.jdk_version = f"Python {platform.python_version()}"
+
         self._heartbeat_data.tenant_app_key = self.config.tenant_app_key
         self._heartbeat_data.env_code = self.config.env_code
         self._heartbeat_data.user_id = self.config.user_id
@@ -555,20 +560,18 @@ class ZkHeartbeatManager:
     def _clean_expired_nodes(self, path: str) -> None:
         """
         清理过期节点
-
-        参考 Java: ZookeeperRegister.cleanExpiredNodes()
-
-        Args:
-            path: 路径
         """
         try:
             children = self.client.list_children(path)
-            if children:
-                for child in children:
-                    child_path = f"{path}/{child}"
-                    stat = self.client.get_stat(child_path)
-                    if stat and stat.ephemeral_owner == 0:
-                        # 永久节点，可能是过期遗留的
+            if not children:
+                return
+
+            for child in children:
+                child_path = f"{path}/{child}"
+                stat = self.client.get_stat(child_path)
+                if stat:
+                    # 【修复2】Kazoo 的 ZnodeStat 属性是驼峰命名
+                    if getattr(stat, 'ephemeralOwner', 0) == 0:  # 永久节点才清理
                         self.client.delete(child_path)
                         logger.info(f"清理过期节点：{child_path}")
         except Exception as e:
