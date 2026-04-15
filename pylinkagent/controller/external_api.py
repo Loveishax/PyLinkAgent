@@ -79,18 +79,18 @@ class HeartRequest:
     ip_address: str = ""
     progress_id: str = ""
     cur_upgrade_batch: str = "-1"
-    agent_status: str = "running"
-    agent_error_info: str = ""
-    simulator_status: str = "running"
-    simulator_error_info: str = ""
+    agent_status: str = "INSTALLED"  # 与 Java 一致：INSTALLED, RUNNING, ERROR
+    agent_error_info: list = field(default_factory=list)  # Java 是 String[]
+    simulator_status: str = "INSTALLED"  # 与 Java 一致
+    simulator_error_info: Optional[str] = None  # Java 可以为 null
     uninstall_status: int = 0
     dormant_status: int = 0
     agent_version: str = "1.0.0"
     simulator_version: str = "1.0.0"
-    dependency_info: str = ""
+    dependency_info: Optional[str] = None  # Java 可以为 null
     flag: str = "shulieEnterprise"
     task_exceed: bool = False
-    command_result: List[Dict[str, Any]] = field(default_factory=list)
+    command_result: List[Any] = field(default_factory=list)  # Java 是 ArrayList
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -166,6 +166,7 @@ class ExternalAPI:
         agent_id: str,
         api_key: Optional[str] = None,
         timeout: int = 30,
+        extra_headers: Optional[Dict[str, str]] = None,
     ):
         """
         初始化 ExternalAPI
@@ -176,12 +177,20 @@ class ExternalAPI:
             agent_id: Agent ID
             api_key: API 密钥
             timeout: HTTP 超时时间 (秒)
+            extra_headers: 额外的请求头字典，例如：
+                          {
+                              "userAppKey": "ed45ef6b-bf94-48fa-b0c0-15e0285365d2",
+                              "tenantAppKey": "ed45ef6b-bf94-48fa-b0c0-15e0285365d2",
+                              "userId": "1",
+                              "envCode": "test"
+                          }
         """
         self.tro_web_url = tro_web_url.rstrip("/")
         self.app_name = app_name
         self.agent_id = agent_id
         self.api_key = api_key or ""
         self.timeout = timeout
+        self.extra_headers = extra_headers or {}
 
         self._client: Optional[Any] = None
         self._initialized = False
@@ -677,14 +686,35 @@ class ExternalAPI:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        # 添加控制台必需的请求头
-        extra_headers = os.getenv("HTTP_MUST_HEADERS", "")
-        if extra_headers:
+        # 优先级 1: 从 JSON 环境变量读取（最低优先级）
+        extra_headers_env = os.getenv("HTTP_MUST_HEADERS", "")
+        if extra_headers_env:
             try:
-                extra = json.loads(extra_headers)
+                extra = json.loads(extra_headers_env)
                 headers.update(extra)
             except Exception:
                 pass
+
+        # 优先级 2: 从单个环境变量读取（中等优先级，覆盖 JSON）
+        user_app_key = os.getenv("USER_APP_KEY", "")
+        if user_app_key:
+            headers["userAppKey"] = user_app_key
+
+        tenant_app_key = os.getenv("TENANT_APP_KEY", "")
+        if tenant_app_key:
+            headers["tenantAppKey"] = tenant_app_key
+
+        user_id = os.getenv("USER_ID", "")
+        if user_id:
+            headers["userId"] = user_id
+
+        env_code = os.getenv("ENV_CODE", "test")
+        if env_code:
+            headers["envCode"] = env_code
+
+        # 优先级 3: 从 extra_headers 参数读取（最高优先级，覆盖所有）
+        if self.extra_headers:
+            headers.update(self.extra_headers)
 
         return headers
 

@@ -100,15 +100,38 @@ class PyLinkAgentBootstrapper:
         app_name = os.getenv('APP_NAME', 'default-app')
         agent_id = os.getenv('AGENT_ID', f'pylinkagent-{os.getpid()}')
 
+        # 构建请求头（从环境变量读取）
+        extra_headers = {}
+
+        # 从环境变量读取关键字段
+        user_app_key = os.getenv('USER_APP_KEY', '')
+        if user_app_key:
+            extra_headers['userAppKey'] = user_app_key
+
+        tenant_app_key = os.getenv('TENANT_APP_KEY', '')
+        if tenant_app_key:
+            extra_headers['tenantAppKey'] = tenant_app_key
+
+        user_id = os.getenv('USER_ID', '')
+        if user_id:
+            extra_headers['userId'] = user_id
+
+        env_code = os.getenv('ENV_CODE', 'test')
+        if env_code:
+            extra_headers['envCode'] = env_code
+
         logger.info(f"初始化 ExternalAPI:")
         logger.info(f"  控制台地址：{tro_web_url}")
         logger.info(f"  应用名称：{app_name}")
         logger.info(f"  Agent ID: {agent_id}")
+        if extra_headers:
+            logger.info(f"  请求头配置：{len(extra_headers)} 个")
 
         self._external_api = ExternalAPI(
             tro_web_url=tro_web_url,
             app_name=app_name,
             agent_id=agent_id,
+            extra_headers=extra_headers if extra_headers else None,
         )
 
         return self._external_api.initialize()

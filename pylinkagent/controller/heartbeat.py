@@ -32,15 +32,15 @@ class AgentStatus:
 
     对应 Java 的 HeartRequest 中的状态字段
     """
-    agent_status: str = "running"
-    agent_error_info: str = ""
-    simulator_status: str = "running"
-    simulator_error_info: str = ""
+    agent_status: str = "INSTALLED"  # 与 Java 一致
+    agent_error_info: list = field(default_factory=list)  # Java 是 String[]
+    simulator_status: str = "INSTALLED"  # 与 Java 一致
+    simulator_error_info: Optional[str] = None  # Java 可以为 null
     uninstall_status: int = 0
     dormant_status: int = 0
     agent_version: str = "1.0.0"
     simulator_version: str = "1.0.0"
-    dependency_info: str = ""
+    dependency_info: Optional[str] = None  # Java 可以为 null
     task_exceed: bool = False
 
 
@@ -205,6 +205,7 @@ class HeartbeatReporter:
             agent_id=self.external_api.agent_id,
             ip_address=ip_address,
             progress_id=progress_id,
+            cur_upgrade_batch="-1",  # 与 Java 一致
             agent_status=self._status.agent_status,
             agent_error_info=self._status.agent_error_info,
             simulator_status=self._status.simulator_status,
@@ -213,7 +214,8 @@ class HeartbeatReporter:
             dormant_status=self._status.dormant_status,
             agent_version=self._status.agent_version,
             simulator_version=self._status.simulator_version,
-            dependency_info=dependency_info,
+            dependency_info=dependency_info if dependency_info else None,  # Java 可以为 null
+            flag="shulieEnterprise",  # 与 Java 一致
             task_exceed=self._status.task_exceed,
             command_result=self._command_results.copy(),
         )
