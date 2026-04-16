@@ -14,6 +14,21 @@ from .zk_heartbeat import (
     get_heartbeat_manager,
     reset_heartbeat_manager,
 )
+from .zk_client_path import (
+    ZkClientPathNode,
+    ZkPathChildrenCache,
+    ZkClientPathRegister,
+    ClientNodeData,
+    get_client_path_register,
+    reset_client_path_register,
+)
+from .zk_log_server import (
+    ZkLogServerDiscovery,
+    LogServerInfo,
+    LogServerSelector,
+    get_log_server_discovery,
+    reset_log_server_discovery,
+)
 
 __all__ = [
     # 配置
@@ -34,4 +49,19 @@ __all__ = [
     'HeartbeatData',
     'get_heartbeat_manager',
     'reset_heartbeat_manager',
+
+    # 客户端路径注册
+    'ZkClientPathNode',
+    'ZkPathChildrenCache',
+    'ZkClientPathRegister',
+    'ClientNodeData',
+    'get_client_path_register',
+    'reset_client_path_register',
+
+    # 日志服务器发现
+    'ZkLogServerDiscovery',
+    'LogServerInfo',
+    'LogServerSelector',
+    'get_log_server_discovery',
+    'reset_log_server_discovery',
 ]

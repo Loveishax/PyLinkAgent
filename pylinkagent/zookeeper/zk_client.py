@@ -378,13 +378,9 @@ class ZkClient:
             return False
 
         try:
-            @DataWatch(path)
-            def watcher(data: bytes, stat: dict):
-                try:
-                    callback(data, stat)
-                except Exception as e:
-                    logger.error(f"DataWatch 回调出错：{e}")
-
+            # 使用 kazoo 的 DataWatch，需要传入 client 实例
+            # DataWatch 签名：DataWatch(client, path, func)
+            watcher = DataWatch(self._client, path, callback)
             self._data_watches[path] = watcher
             logger.debug(f"已添加 DataWatch: {path}")
             return True
@@ -407,13 +403,9 @@ class ZkClient:
             return False
 
         try:
-            @ChildrenWatch(path)
-            def watcher(children: List[str]):
-                try:
-                    callback(children)
-                except Exception as e:
-                    logger.error(f"ChildrenWatch 回调出错：{e}")
-
+            # 使用 kazoo 的 ChildrenWatch，需要传入 client 实例
+            # ChildrenWatch 签名：ChildrenWatch(client, path, func)
+            watcher = ChildrenWatch(self._client, path, callback)
             self._children_watches[path] = watcher
             logger.debug(f"已添加 ChildrenWatch: {path}")
             return True
