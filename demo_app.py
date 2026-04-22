@@ -1,560 +1,339 @@
 """
-PyLinkAgent Demo Application
+PyLinkAgent Demo Application - 影子路由全链路演示
 
-完整的全链路压测演示应用，包含：
-- 用户管理
-- 订单管理
-- 商品管理
-- 链路追踪
-- SQL 重写演示
-- PyLinkAgent 集成
+演示 PyLinkAgent 两门影子路由决策:
+  Gate 1: PradarSwitcher.is_cluster_test_enabled() - 全局压测开关
+  Gate 2: Pradar.is_cluster_test()               - 当前请求流量染色
 
-支持影子库路由，通过 x-pressure-test Header 标识压测流量
+数据流:
+  HTTP Header (x-pressure-test)
+    -> Middleware 检测压测 Header
+    -> PradarSwitcher.turn_cluster_test_switch_on()   [Gate 1]
+    -> Pradar.start_trace() + Pradar.set_cluster_test(True)  [Gate 2]
+    -> ShadowRouter.should_route() = Gate1 && Gate2
+    -> 路由到业务数据 or 影子数据
+    -> Pradar.end_trace() 清理
 """
 
 import os
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import time
 import logging
-import json
 
-# 导入 PyLinkAgent
-try:
-    from pylinkagent.controller.external_api import ExternalAPI, HeartRequest
-    from pylinkagent.controller.config_fetcher import ConfigFetcher
-    PYLINKAGENT_AVAILABLE = True
-except ImportError:
-    PYLINKAGENT_AVAILABLE = False
-    ExternalAPI = None
-    HeartRequest = None
-    ConfigFetcher = None
+# ==================== PyLinkAgent 影子路由模块 ====================
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="PyLinkAgent Demo Application",
-    description="全链路压测影子库功能演示应用",
-    version="1.0.0"
+from pylinkagent.pradar import Pradar, PradarSwitcher
+from pylinkagent.shadow import (
+    get_router, get_config_center, get_shadow_context,
+    ShadowDatabaseConfig, ShadowSQLRewriter,
 )
 
-# ============= 模拟数据库 =============
+# ==================== 模拟数据库 ====================
 
 USERS_DB = [
     {"id": 1, "name": "张三", "email": "zhangsan@example.com"},
     {"id": 2, "name": "李四", "email": "lisi@example.com"},
     {"id": 3, "name": "王五", "email": "wangwu@example.com"},
-    {"id": 4, "name": "赵六", "email": "zhaoliu@example.com"},
-    {"id": 5, "name": "钱七", "email": "qianqi@example.com"},
 ]
 
 SHADOW_USERS_DB = [
-    {"id": 1, "name": "影子用户 1", "email": "shadow_user1@test.com", "is_shadow": True},
-    {"id": 2, "name": "影子用户 2", "email": "shadow_user2@test.com", "is_shadow": True},
-    {"id": 3, "name": "影子用户 3", "email": "shadow_user3@test.com", "is_shadow": True},
-    {"id": 4, "name": "影子用户 4", "email": "shadow_user4@test.com", "is_shadow": True},
-    {"id": 5, "name": "影子用户 5", "email": "shadow_user5@test.com", "is_shadow": True},
+    {"id": 1, "name": "影子用户 张三", "email": "pt_zhangsan@test.com", "is_shadow": True},
+    {"id": 2, "name": "影子用户 李四", "email": "pt_lisi@test.com", "is_shadow": True},
+    {"id": 3, "name": "影子用户 王五", "email": "pt_wangwu@test.com", "is_shadow": True},
 ]
 
 ORDERS_DB = [
-    {"id": 1, "user_id": 1, "total": 99.99, "status": "completed"},
-    {"id": 2, "user_id": 1, "total": 199.99, "status": "pending"},
-    {"id": 3, "user_id": 2, "total": 299.99, "status": "shipped"},
-    {"id": 4, "user_id": 3, "total": 399.99, "status": "completed"},
-    {"id": 5, "user_id": 4, "total": 499.99, "status": "pending"},
+    {"id": 101, "user_id": 1, "amount": 99.99, "status": "已支付"},
+    {"id": 102, "user_id": 2, "amount": 199.99, "status": "待发货"},
 ]
 
 SHADOW_ORDERS_DB = [
-    {"id": 1, "user_id": 1, "total": 999.99, "status": "shadow_completed", "is_shadow": True},
-    {"id": 2, "user_id": 1, "total": 1999.99, "status": "shadow_pending", "is_shadow": True},
-    {"id": 3, "user_id": 2, "total": 2999.99, "status": "shadow_shipped", "is_shadow": True},
-    {"id": 4, "user_id": 3, "total": 3999.99, "status": "shadow_completed", "is_shadow": True},
-    {"id": 5, "user_id": 4, "total": 4999.99, "status": "shadow_pending", "is_shadow": True},
+    {"id": 101, "user_id": 1, "amount": 999.99, "status": "影子已支付", "is_shadow": True},
+    {"id": 102, "user_id": 2, "amount": 1999.99, "status": "影子待发货", "is_shadow": True},
 ]
 
 PRODUCTS_DB = [
-    {"id": 1, "name": "iPhone 15 Pro", "price": 7999.00, "stock": 100},
-    {"id": 2, "name": "MacBook Pro 14", "price": 14999.00, "stock": 50},
-    {"id": 3, "name": "AirPods Pro", "price": 1899.00, "stock": 200},
-    {"id": 4, "name": "iPad Air", "price": 4799.00, "stock": 80},
-    {"id": 5, "name": "Apple Watch", "price": 3199.00, "stock": 150},
+    {"id": 1, "name": "iPhone 15", "price": 7999},
+    {"id": 2, "name": "MacBook Pro", "price": 14999},
 ]
 
 SHADOW_PRODUCTS_DB = [
-    {"id": 1, "name": "影子 iPhone 15 Pro", "price": 9999.00, "stock": 10, "is_shadow": True},
-    {"id": 2, "name": "影子 MacBook Pro 14", "price": 19999.00, "stock": 5, "is_shadow": True},
-    {"id": 3, "name": "影子 AirPods Pro", "price": 2899.00, "stock": 20, "is_shadow": True},
-    {"id": 4, "name": "影子 iPad Air", "price": 6799.00, "stock": 8, "is_shadow": True},
-    {"id": 5, "name": "影子 Apple Watch", "price": 4199.00, "stock": 15, "is_shadow": True},
+    {"id": 1, "name": "影子 iPhone 15", "price": 9999, "is_shadow": True},
+    {"id": 2, "name": "影子 MacBook Pro", "price": 19999, "is_shadow": True},
 ]
 
+# ==================== 应用 ====================
 
-# ============= 数据模型 =============
+app = FastAPI(
+    title="PyLinkAgent Demo",
+    description="影子路由全链路演示 (Pradar + ShadowRouter)",
+    version="2.0",
+)
 
-class User(BaseModel):
-    id: int
-    name: str
-    email: str
-    is_shadow: Optional[bool] = False
-
-
-class Order(BaseModel):
-    id: int
-    user_id: int
-    total: float
-    status: str
-    is_shadow: Optional[bool] = False
+logger = logging.getLogger(__name__)
 
 
-class Product(BaseModel):
-    id: int
-    name: str
-    price: float
-    stock: int
-    is_shadow: Optional[bool] = False
+# ==================== 影子路由中间件 ====================
 
+@app.middleware("http")
+async def shadow_routing_middleware(request: Request, call_next):
+    """
+    影子路由中间件 — 核心两门决策
 
-# ============= 工具函数 =============
+    每个请求经过此中间件:
+    1. 检测 x-pressure-test Header
+    2. 打开全局压测开关 (Gate 1)
+    3. 创建 Pradar Trace 并标记压测 (Gate 2)
+    4. ShadowRouter.should_route() 做路由决策
+    5. 将路由结果存入 request.state
+    6. 请求结束后清理 Pradar 上下文
+    """
+    # 提取压测 Header
+    is_pressure = (
+        request.headers.get("x-pressure-test", "").lower() == "true"
+        or request.headers.get("x-shadow-flag") is not None
+    )
 
-# PyLinkAgent 全局变量
-_external_api = None
-_config_fetcher = None
-
-
-def get_external_api() -> Optional[ExternalAPI]:
-    """获取 ExternalAPI 实例"""
-    return _external_api
-
-
-def get_config_fetcher() -> Optional[ConfigFetcher]:
-    """获取 ConfigFetcher 实例"""
-    return _config_fetcher
-
-
-def is_pressure_test(x_pressure_test: Optional[str] = None, x_shadow_flag: Optional[str] = None) -> bool:
-    """判断是否为压测流量"""
-    return (x_pressure_test and x_pressure_test.lower() == "true") or (x_shadow_flag is not None)
-
-
-def get_users(pressure: bool) -> List[Dict]:
-    """获取用户列表"""
-    return SHADOW_USERS_DB if pressure else USERS_DB
-
-
-def get_orders(pressure: bool) -> List[Dict]:
-    """获取订单列表"""
-    return SHADOW_ORDERS_DB if pressure else ORDERS_DB
-
-
-def get_products(pressure: bool) -> List[Dict]:
-    """获取商品列表"""
-    return SHADOW_PRODUCTS_DB if pressure else PRODUCTS_DB
-
-
-# ============= HTML 首页 =============
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时初始化 PyLinkAgent"""
-    global _external_api, _config_fetcher
-
-    if not PYLINKAGENT_AVAILABLE:
-        logger.warning("PyLinkAgent 不可用，跳过初始化")
-        return
-
-    logger.info("正在初始化 PyLinkAgent...")
+    routing_info = {
+        "is_pressure_header": is_pressure,
+        "gate1_global_switch": False,
+        "gate2_traffic_dye": False,
+        "should_route": False,
+        "target": "business",
+        "trace_id": "",
+    }
 
     try:
-        # 从环境变量读取配置
-        takin_url = os.getenv("MANAGEMENT_URL", "http://localhost:9999")
-        app_name = os.getenv("APP_NAME", "demo-app")
-        agent_id = os.getenv("AGENT_ID", "pylinkagent-demo")
+        if is_pressure:
+            # Gate 1: 打开全局压测开关
+            PradarSwitcher.turn_cluster_test_switch_on()
+            routing_info["gate1_global_switch"] = True
 
-        # 初始化 ExternalAPI
-        _external_api = ExternalAPI(
-            tro_web_url=takin_url,
-            app_name=app_name,
-            agent_id=agent_id,
-        )
+            # Gate 2: 创建 Trace 并标记为压测流量
+            ctx = Pradar.start_trace("demo-app", "web", request.url.path)
+            Pradar.set_cluster_test(True)
+            routing_info["gate2_traffic_dye"] = True
+            routing_info["trace_id"] = ctx.trace_id
 
-        if _external_api.initialize():
-            logger.info("ExternalAPI 初始化成功")
+            # Pradar 用户数据透传
+            Pradar.set_user_data("source", "demo_middleware")
 
-            # 初始化 ConfigFetcher
-            _config_fetcher = ConfigFetcher(
-                external_api=_external_api,
-                interval=60,
-                initial_delay=5,
+        # 两门决策: ShadowRouter.should_route()
+        router = get_router()
+        should_route = router.should_route()
+        routing_info["should_route"] = should_route
+        routing_info["target"] = "shadow" if should_route else "business"
+
+        # ShadowRouter.route_mysql() 生成真实影子连接参数
+        # 必须在 Pradar 上下文中调用 (should_route 依赖 is_cluster_test)
+        if should_route:
+            business_url = "jdbc:mysql://7.198.147.127:3306/wefire_db_sit"
+            shadow_conn = router.route_mysql(
+                original_url=business_url,
+                original_username="wefireSitAdmin",
             )
+            if shadow_conn and "host" in shadow_conn:
+                routing_info["shadow_mysql"] = {
+                    "host": shadow_conn.get("host"),
+                    "port": shadow_conn.get("port"),
+                    "database": shadow_conn.get("database"),
+                    "user": shadow_conn.get("user"),
+                }
 
-            # 注册配置变更回调
-            def on_config_change(key, old_value, new_value):
-                logger.info(f"配置变更：{key}")
+        # 存入 request.state 供业务端点使用
+        request.state.routing = routing_info
 
-            _config_fetcher.on_config_change(on_config_change)
+        response = await call_next(request)
+        return response
 
-            if _config_fetcher.start():
-                logger.info("ConfigFetcher 启动成功")
+    finally:
+        # 清理 Pradar 上下文 (仅压测请求有)
+        if Pradar.has_context():
+            Pradar.end_trace()
 
-            # 发送一次心跳
-            heart_request = HeartRequest(
-                project_name=app_name,
-                agent_id=agent_id,
-                ip_address="127.0.0.1",
-                progress_id=str(os.getpid()),
-            )
-            commands = _external_api.send_heartbeat(heart_request)
-            logger.info(f"初始心跳发送成功，收到 {len(commands)} 个命令")
-        else:
-            logger.error("ExternalAPI 初始化失败")
-
-    except Exception as e:
-        logger.error(f"PyLinkAgent 初始化失败：{e}")
+        # 如果当前请求没有压力但全局开关开着，保留开关状态
+        # 这样后续没有 Header 的请求也能被路由到影子库
+        # (实际场景中，全局开关由控制台远程控制)
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭时清理 PyLinkAgent"""
-    global _external_api, _config_fetcher
+# ==================== 路由辅助函数 ====================
 
-    if _config_fetcher:
-        _config_fetcher.stop()
-        logger.info("ConfigFetcher 已停止")
+def route_data(business_data, shadow_data, request: Request):
+    """
+    根据路由决策返回数据
 
-    if _external_api:
-        _external_api.shutdown()
-        logger.info("ExternalAPI 已关闭")
-
-
-# ============= HTML 首页 =============
-
-@app.get("/", response_class=HTMLResponse, tags=["首页"])
-def read_root():
-    """应用首页 - 展示所有 API 端点"""
-    return HTMLResponse(content="""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>PyLinkAgent Demo</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
-        h2 { color: #555; margin-top: 30px; }
-        .endpoint { background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 4px; border-left: 4px solid #007bff; }
-        .method { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; margin-right: 10px; }
-        .get { background: #28a745; color: white; }
-        .post { background: #007bff; color: white; }
-        code { background: #e9ecef; padding: 2px 6px; border-radius: 3px; font-size: 14px; }
-        .pressure-test { background: #fff3cd; border-left-color: #ffc107; }
-        .info { color: #666; font-size: 14px; margin-top: 20px; padding: 15px; background: #e7f3ff; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🚀 PyLinkAgent Demo Application</h1>
-        <p>全链路压测影子库功能演示应用</p>
-
-        <h2>📋 API 端点</h2>
-
-        <div class="endpoint">
-            <span class="method get">GET</span>
-            <code>/health</code>
-            <p>健康检查接口</p>
-        </div>
-
-        <div class="endpoint">
-            <span class="method get">GET</span>
-            <code>/api/users</code>
-            <p>获取用户列表（压测流量返回影子用户）</p>
-        </div>
-
-        <div class="endpoint">
-            <span class="method get">GET</span>
-            <code>/api/users/{id}</code>
-            <p>获取用户详情</p>
-        </div>
-
-        <div class="endpoint">
-            <span class="method get">GET</span>
-            <code>/api/orders</code>
-            <p>获取订单列表（压测流量返回影子订单）</p>
-        </div>
-
-        <div class="endpoint">
-            <span class="method get">GET</span>
-            <code>/api/orders/{id}</code>
-            <p>获取订单详情</p>
-        </div>
-
-        <div class="endpoint">
-            <span class="method get">GET</span>
-            <code>/api/products</code>
-            <p>获取商品列表（压测流量返回影子商品）</p>
-        </div>
-
-        <div class="endpoint pressure-test">
-            <span class="method get">GET</span>
-            <code>/api/chain/{user_id}</code>
-            <p>链路调用演示 - 同时查询用户和订单</p>
-        </div>
-
-        <div class="endpoint pressure-test">
-            <span class="method get">GET</span>
-            <code>/api/sql/rewrite?sql=SELECT * FROM users</code>
-            <p>SQL 重写演示 - 压测流量下替换表名</p>
-        </div>
-
-        <div class="endpoint">
-            <span class="method post">POST</span>
-            <code>/shadow/config</code>
-            <p>注册影子库配置</p>
-        </div>
-
-        <h2>🔧 压测流量标识</h2>
-        <p>在请求中添加 Header 来标识压测流量：</p>
-        <code>x-pressure-test: true</code>
-
-        <div class="info">
-            <h3>📖 使用示例</h3>
-            <p><strong>正常流量：</strong></p>
-            <code>curl http://localhost:8000/api/users/1</code>
-            <p><strong>压测流量：</strong></p>
-            <code>curl -H "x-pressure-test: true" http://localhost:8000/api/users/1</code>
-        </div>
-
-        <div class="info">
-            <h3>📊 影子库表映射</h3>
-            <p><code>users → shadow_users</code></p>
-            <p><code>orders → shadow_orders</code></p>
-            <p><code>products → shadow_products</code></p>
-        </div>
-    </div>
-</body>
-</html>
-""")
+    从 request.state.routing 读取中间件决策结果
+    """
+    routing = getattr(request.state, "routing", {})
+    is_shadow = routing.get("should_route", False)
+    data = shadow_data if is_shadow else business_data
+    return {
+        "data": data,
+        "routing": {
+            "target": "shadow" if is_shadow else "business",
+            "gate1_global_switch": routing.get("gate1_global_switch", False),
+            "gate2_traffic_dye": routing.get("gate2_traffic_dye", False),
+            "trace_id": routing.get("trace_id", ""),
+        },
+    }
 
 
-@app.get("/health", tags=["健康检查"])
-def health_check():
+# ==================== 业务端点 ====================
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    """首页"""
+    return """
+<!DOCTYPE html><html><head><title>PyLinkAgent Demo</title>
+<style>body{font-family:monospace;margin:40px;background:#1a1a2e;color:#e0e0e0}
+.container{max-width:800px;margin:0 auto}
+h1{color:#00d4ff}h2{color:#7b68ee;margin-top:30px}
+.endpoint{background:#16213e;padding:12px;margin:8px 0;border-radius:4px;border-left:3px solid #00d4ff}
+.method{color:#00d4ff;font-weight:bold}
+code{background:#0f3460;padding:2px 8px;border-radius:3px}
+.pressure{background:#1a1a3e;border-left-color:#ff6b6b}
+.info{background:#0f3460;padding:15px;margin-top:15px;border-radius:4px}
+</style></head><body><div class="container">
+<h1>PyLinkAgent Demo</h1><p>影子路由全链路演示</p>
+<h2>API 端点</h2>
+<div class="endpoint"><span class="method">GET</span> <code>/health</code> 健康检查</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/users</code> 用户列表</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/orders</code> 订单列表</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/products</code> 商品列表</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/chain/{user_id}</code> 链路调用</div>
+<div class="endpoint pressure"><span class="method">GET</span> <code>/api/sql/rewrite?sql=...</code> SQL 重写</div>
+<div class="endpoint pressure"><span class="method">POST</span> <code>/shadow/config</code> 注册影子配置</div>
+<div class="endpoint"><span class="method">GET</span> <code>/shadow/status</code> 影子状态</div>
+<div class="endpoint"><span class="method">GET</span> <code>/routing/decision</code> 两门决策详情</div>
+<div class="endpoint pressure"><span class="method">POST</span> <code>/switch/cluster_test</code> 压测开关控制</div>
+<div class="info">
+<h3>压测流量标识</h3>
+<p><code>curl http://localhost:8000/api/users</code> — 正常流量</p>
+<p><code>curl -H "x-pressure-test: true" http://localhost:8000/api/users</code> — 压测流量</p>
+</div></div></body></html>
+"""
+
+
+@app.get("/health")
+def health():
     """健康检查"""
     return {
         "status": "healthy",
-        "service": "pylinkagent-demo",
-        "shadow_db_support": True
+        "service": "pylinkagent-demo-v2",
+        "cluster_test_switch": PradarSwitcher.is_cluster_test_enabled(),
     }
 
 
-# ============= 用户接口 =============
-
-@app.get("/api/users", response_model=List[User], tags=["用户管理"])
-def list_users(
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
-    """获取用户列表"""
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/users - pressure={pressure}")
-
-    users = get_users(pressure)
-    return users
+@app.get("/api/users")
+def list_users(request: Request):
+    """用户列表 — 路由决策由中间件完成"""
+    return route_data(USERS_DB, SHADOW_USERS_DB, request)
 
 
-@app.get("/api/users/{user_id}", response_model=User, tags=["用户管理"])
-def get_user(
-    user_id: int,
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
-    """获取用户详情"""
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/users/{user_id} - pressure={pressure}")
-
-    users = get_users(pressure)
-    for user in users:
+@app.get("/api/users/{user_id}")
+def get_user(user_id: int, request: Request):
+    """用户详情"""
+    result = route_data(USERS_DB, SHADOW_USERS_DB, request)
+    for user in result["data"]:
         if user["id"] == user_id:
-            return user
-
-    raise HTTPException(status_code=404, detail="User not found")
-
-
-# ============= 订单接口 =============
-
-@app.get("/api/orders", response_model=List[Order], tags=["订单管理"])
-def list_orders(
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
-    """获取订单列表"""
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/orders - pressure={pressure}")
-
-    orders = get_orders(pressure)
-    return orders
+            return {"data": [user], "routing": result["routing"]}
+    raise HTTPException(404, "User not found")
 
 
-@app.get("/api/orders/{order_id}", response_model=Order, tags=["订单管理"])
-def get_order(
-    order_id: int,
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
-    """获取订单详情"""
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/orders/{order_id} - pressure={pressure}")
-
-    orders = get_orders(pressure)
-    for order in orders:
-        if order["id"] == order_id:
-            return order
-
-    raise HTTPException(status_code=404, detail="Order not found")
+@app.get("/api/orders")
+def list_orders(request: Request):
+    """订单列表"""
+    return route_data(ORDERS_DB, SHADOW_ORDERS_DB, request)
 
 
-# ============= 商品接口 =============
-
-@app.get("/api/products", response_model=List[Product], tags=["商品管理"])
-def list_products(
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
-    """获取商品列表"""
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/products - pressure={pressure}")
-
-    products = get_products(pressure)
-    return products
+@app.get("/api/products")
+def list_products(request: Request):
+    """商品列表"""
+    return route_data(PRODUCTS_DB, SHADOW_PRODUCTS_DB, request)
 
 
-@app.get("/api/products/{product_id}", response_model=Product, tags=["商品管理"])
-def get_product(
-    product_id: int,
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
-    """获取商品详情"""
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/products/{product_id} - pressure={pressure}")
+# ==================== 链路调用演示 ====================
 
-    products = get_products(pressure)
-    for product in products:
-        if product["id"] == product_id:
-            return product
-
-    raise HTTPException(status_code=404, detail="Product not found")
-
-
-# ============= 链路调用 =============
-
-@app.get("/api/chain/{user_id}", tags=["链路追踪"])
-def chain_call(
-    user_id: int,
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
-):
+@app.get("/api/chain/{user_id}")
+def chain_call(user_id: int, request: Request):
     """
     链路调用演示
 
-    同时查询用户和订单，展示影子库路由效果
+    在一次请求中查询用户 + 订单，展示影子路由的一致性
     """
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-    logger.info(f"GET /api/chain/{user_id} - pressure={pressure}")
+    routing = getattr(request.state, "routing", {})
+    is_shadow = routing.get("should_route", False)
 
-    # 查询用户
-    users = get_users(pressure)
-    user_data = next((u for u in users if u["id"] == user_id), None)
+    users = SHADOW_USERS_DB if is_shadow else USERS_DB
+    orders = SHADOW_ORDERS_DB if is_shadow else ORDERS_DB
 
-    # 查询订单 (假设用户有订单)
-    orders = get_orders(pressure)
+    user = next((u for u in users if u["id"] == user_id), None)
     user_orders = [o for o in orders if o["user_id"] == user_id]
 
     return {
-        "user": user_data,
+        "user": user,
         "orders": user_orders,
-        "is_pressure_test": pressure,
         "routing": {
-            "user_table": "shadow_users" if pressure else "users",
-            "order_table": "shadow_orders" if pressure else "orders",
-        }
+            "target": "shadow" if is_shadow else "business",
+            "trace_id": routing.get("trace_id", ""),
+            "gate1_switch": routing.get("gate1_global_switch", False),
+            "gate2_dye": routing.get("gate2_traffic_dye", False),
+        },
     }
 
 
-# ============= SQL 重写演示 =============
+# ==================== SQL 重写 ====================
 
-@app.get("/api/sql/rewrite", tags=["SQL 重写"])
+@app.get("/api/sql/rewrite")
 def sql_rewrite(
-    sql: str = "SELECT * FROM users",
-    x_pressure_test: Optional[str] = Header(None, alias="x-pressure-test"),
-    x_shadow_flag: Optional[str] = Header(None, alias="x-shadow-flag")
+    sql: str = "SELECT * FROM users WHERE id = 1",
+    request: Request = None,
 ):
     """
     SQL 重写演示
 
-    压测流量下，SQL 中的表名会被自动替换为影子表名
+    使用 ShadowSQLRewriter 将业务表名替换为影子表名
     """
-    from pylinkagent.shadow import get_router
+    routing = getattr(getattr(request, "state", None), "routing", {})
+    is_shadow = routing.get("should_route", False)
 
-    pressure = is_pressure_test(x_pressure_test, x_shadow_flag)
-
-    # 设置压测上下文
-    if pressure:
-        from pylinkagent.shadow.context import create_new_context
-        create_new_context(is_pressure=True)
-
-    router = get_router()
-
-    # 模拟 SQL 重写
-    original_sql = sql
-    rewritten_sql = sql
-
-    # 简单的表名替换演示
-    table_mappings = {
+    table_mapping = {
         "users": "shadow_users",
         "orders": "shadow_orders",
         "products": "shadow_products",
     }
 
-    if pressure:
-        for biz_table, shadow_table in table_mappings.items():
-            rewritten_sql = rewritten_sql.replace(biz_table, shadow_table)
+    rewriter = ShadowSQLRewriter(table_mapping)
+    rewritten = rewriter.rewrite(sql) if is_shadow else sql
 
     return {
-        "original_sql": original_sql,
-        "rewritten_sql": rewritten_sql,
-        "is_pressure_test": pressure,
-        "table_mappings": table_mappings,
+        "original_sql": sql,
+        "rewritten_sql": rewritten,
+        "target": "shadow" if is_shadow else "business",
+        "table_mapping": table_mapping,
+        "needs_rewrite": rewriter.needs_rewrite(sql),
     }
 
 
-# ============= 影子库配置 =============
+# ==================== 影子配置管理 ====================
 
-class ShadowConfig(BaseModel):
+class ShadowConfigInput(BaseModel):
     ds_type: int = 0
     url: str
-    username: str
+    username: str = ""
     password: Optional[str] = None
-    shadow_url: str
-    shadow_username: Optional[str] = None
+    shadow_url: str = ""
+    shadow_username: str = ""
     shadow_password: Optional[str] = None
-    shadow_account_prefix: str = "PT_"
-    shadow_account_suffix: str = ""
     business_shadow_tables: Dict[str, str] = {}
 
 
-@app.post("/shadow/config", tags=["配置管理"])
-def register_shadow_config(config: ShadowConfig):
-    """注册影子库配置"""
-    from pylinkagent.shadow import ShadowDatabaseConfig, get_router
-
-    router = get_router()
-
+@app.post("/shadow/config")
+def register_shadow_config(config: ShadowConfigInput):
+    """注册影子库配置到 ShadowConfigCenter"""
     shadow_config = ShadowDatabaseConfig(
         ds_type=config.ds_type,
         url=config.url,
@@ -563,155 +342,221 @@ def register_shadow_config(config: ShadowConfig):
         shadow_url=config.shadow_url,
         shadow_username=config.shadow_username,
         shadow_password=config.shadow_password,
-        shadow_account_prefix=config.shadow_account_prefix,
-        shadow_account_suffix=config.shadow_account_suffix,
         business_shadow_tables=config.business_shadow_tables,
     )
-
-    router.register_config(shadow_config)
-
-    return {
-        "status": "success",
-        "message": "Shadow config registered",
-        "config": str(shadow_config),
-    }
+    get_config_center().register_db_config(shadow_config)
+    return {"status": "ok", "config_url": config.url, "shadow_url": config.shadow_url}
 
 
-@app.get("/shadow/status", tags=["配置管理"])
+@app.get("/shadow/status")
 def shadow_status():
-    """获取影子库状态"""
-    from pylinkagent.shadow import get_router, get_shadow_context
-
+    """影子配置状态"""
+    cc = get_config_center()
     router = get_router()
-    configs = router.config_manager.get_all_configs() if hasattr(router, 'config_manager') else []
+    all_configs = cc.get_all_db_configs()
 
     return {
-        "shadow_routing_enabled": router.is_enabled(),
-        "shadow_configs_count": len(configs),
-        "shadow_configs": [
+        "config_count": len(all_configs),
+        "router_shadow_enabled": router.is_shadow_enabled(),
+        "configs": [
             {
-                "url": cfg.url,
-                "shadow_url": cfg.shadow_url,
-                "ds_type": cfg.ds_type,
-                "tables": list(cfg.business_shadow_tables.keys()),
+                "url": c.url,
+                "shadow_url": c.shadow_url,
+                "ds_type": c.ds_type,
+                "tables": list(c.business_shadow_tables.keys()),
             }
-            for cfg in configs
+            for c in all_configs.values()
         ],
-        "context": str(get_shadow_context()),
     }
 
 
-# ============= PyLinkAgent 相关接口 =============
+# ==================== 两门决策详情 ====================
 
-@app.get("/pylinkagent/status", tags=["PyLinkAgent"])
-def pylinkagent_status():
-    """获取 PyLinkAgent 状态"""
-    if not PYLINKAGENT_AVAILABLE:
-        return {"available": False, "message": "PyLinkAgent 模块未安装"}
+@app.get("/routing/decision")
+def routing_decision(
+    request: Request = None,
+    x_pressure_test: Optional[str] = Header(None),
+):
+    """
+    两门决策详情
 
-    return {
-        "available": True,
-        "external_api_initialized": _external_api is not None and _external_api.is_initialized(),
-        "config_fetcher_running": _config_fetcher is not None and _config_fetcher.is_running(),
-    }
+    展示当前请求经过两门决策的完整信息:
+    - Gate 1: PradarSwitcher 全局开关状态
+    - Gate 2: Pradar 当前请求压测标记
+    - Result: ShadowRouter.should_route() = Gate1 && Gate2
+    """
+    routing = getattr(getattr(request, "state", None), "routing", {})
 
-
-@app.get("/pylinkagent/config", tags=["PyLinkAgent"])
-def pylinkagent_config():
-    """获取当前影子库配置"""
-    if not PYLINKAGENT_AVAILABLE or not _config_fetcher:
-        raise HTTPException(status_code=500, detail="PyLinkAgent 未初始化")
-
-    config = _config_fetcher.get_config()
-
-    shadow_databases = {}
-    for name, cfg in config.shadow_database_configs.items():
-        shadow_databases[name] = {
-            "url": cfg.url,
-            "shadow_url": cfg.shadow_url,
-            "username": cfg.username,
+    # 额外获取 Pradar 上下文信息
+    ctx_info = {}
+    if Pradar.has_context():
+        ctx = Pradar.get_context()
+        ctx_info = {
+            "trace_id": ctx.trace_id,
+            "invoke_id": ctx.invoke_id,
+            "service": ctx.service_name,
+            "method": ctx.method_name,
+            "cluster_test": ctx.is_cluster_test(),
+            "user_data": ctx.user_data,
         }
 
     return {
-        "has_shadow_config": bool(shadow_databases),
-        "shadow_databases": shadow_databases,
+        "routing": routing,
+        "pradar": {
+            "has_context": Pradar.has_context(),
+            "context": ctx_info,
+            "trace_id": Pradar.get_trace_id(),
+            "is_cluster_test": Pradar.is_cluster_test(),
+        },
+        "pradar_switcher": {
+            "cluster_test_enabled": PradarSwitcher.is_cluster_test_enabled(),
+            "cluster_test_switch": PradarSwitcher._cluster_test_switch,
+        },
+        "how_to_test": {
+            "business": "curl http://localhost:8000/routing/decision",
+            "shadow": 'curl -H "x-pressure-test: true" http://localhost:8000/routing/decision',
+        },
     }
 
 
-@app.post("/pylinkagent/heartbeat", tags=["PyLinkAgent"])
-def manual_heartbeat():
-    """手动发送心跳"""
-    if not PYLINKAGENT_AVAILABLE or not _external_api:
-        raise HTTPException(status_code=500, detail="PyLinkAgent 未初始化")
+# ==================== 影子连接参数演示 ====================
 
-    app_name = os.getenv("APP_NAME", "demo-app")
-    agent_id = os.getenv("AGENT_ID", "pylinkagent-demo")
+@app.get("/routing/mysql")
+def route_mysql_demo(
+    request: Request = None,
+    x_pressure_test: Optional[str] = Header(None),
+):
+    """
+    演示 ShadowRouter.route_mysql() 真实生成影子连接参数
 
-    heart_request = HeartRequest(
-        project_name=app_name,
-        agent_id=agent_id,
-        ip_address="127.0.0.1",
-        progress_id=str(os.getpid()),
-    )
+    生产环境中，wrapt 拦截器会:
+    1. 拦截 pymysql.connect(host='7.198.147.127', port=3306, db='wefire_db_sit')
+    2. 调用 ShadowRouter.route_mysql() 获取影子连接参数
+    3. 替换为 ShadowRouter 返回的影子库 host/user/db
+    """
+    routing = getattr(getattr(request, "state", None), "routing", {})
+    shadow_mysql = routing.get("shadow_mysql")
 
-    commands = _external_api.send_heartbeat(heart_request)
+    # 模拟业务库连接参数 (对应真实 API 中的 wefire_db_sit)
+    business_url = "jdbc:mysql://7.198.147.127:3306/wefire_db_sit"
+    business_user = "wefireSitAdmin"
+
+    result = {
+        "routing_decision": routing,
+        "business_connection": {
+            "url": business_url,
+            "pymysql_url": ShadowDatabaseConfig.jdbc_to_pymysql(business_url),
+            "username": business_user,
+        },
+    }
+
+    if shadow_mysql:
+        result["shadow_connection"] = {
+            "generated_by": "ShadowRouter.route_mysql() (in middleware)",
+            "host": shadow_mysql.get("host"),
+            "port": shadow_mysql.get("port"),
+            "database": shadow_mysql.get("database"),
+            "user": shadow_mysql.get("user"),
+            "pymysql_url": f"mysql+pymysql://{shadow_mysql.get('user')}@{shadow_mysql.get('host')}:{shadow_mysql.get('port')}/{shadow_mysql.get('database')}",
+        }
+        result["interceptor_behavior"] = (
+            f"pymysql.connect(host='7.198.147.127') "
+            f"→ 拦截替换 → "
+            f"connect(host={shadow_mysql.get('host')}, "
+            f"user={shadow_mysql.get('user')}, "
+            f"db={shadow_mysql.get('database')})"
+        )
+    else:
+        result["shadow_connection"] = None
+        result["interceptor_behavior"] = (
+            "无压测流量，拦截器不做替换，直接使用业务库连接"
+        )
+
+    return result
+
+
+# ==================== 压测开关控制 ====================
+
+class SwitchControl(BaseModel):
+    enabled: bool
+
+
+@app.post("/switch/cluster_test")
+def control_cluster_test(control: SwitchControl):
+    """
+    控制全局压测开关 (Gate 1)
+
+    模拟控制台远程下发压测指令。
+    开启后，即使没有 x-pressure-test Header，
+    后续请求的 Gate 1 也会通过。
+    """
+    if control.enabled:
+        PradarSwitcher.turn_cluster_test_switch_on()
+    else:
+        PradarSwitcher.turn_cluster_test_switch_off()
 
     return {
-        "status": "success",
-        "agent_id": agent_id,
-        "commands_count": len(commands)
+        "cluster_test_switch": PradarSwitcher.is_cluster_test_enabled(),
+        "set_to": control.enabled,
     }
 
 
-# ============= 启动信息 =============
+# ==================== 启动 ====================
 
 def print_startup_info():
-    """打印启动信息"""
     print("=" * 60)
-    print("PyLinkAgent Demo Application")
+    print("PyLinkAgent Demo v2.0 — 影子路由全链路")
     print("=" * 60)
-    print("")
-    print("Endpoints:")
-    print("  GET  /                  - Application Home")
-    print("  GET  /health            - Health Check")
-    print("  GET  /api/users         - User List")
-    print("  GET  /api/users/{id}    - User Details")
-    print("  GET  /api/orders        - Order List")
-    print("  GET  /api/orders/{id}   - Order Details")
-    print("  GET  /api/products      - Product List")
-    print("  GET  /api/chain/{id}    - Chain Call")
-    print("  GET  /api/sql/rewrite   - SQL Rewrite")
-    print("  POST /shadow/config     - Register Config")
-    print("  GET  /shadow/status     - Shadow Status")
-    print("")
-    print("PyLinkAgent Endpoints:")
-    print("  GET  /pylinkagent/status    - PyLinkAgent Status")
-    print("  GET  /pylinkagent/config    - Shadow Config")
-    print("  POST /pylinkagent/heartbeat - Manual Heartbeat")
-    print("")
-    print("Pressure Test Flag:")
-    print("  x-pressure-test: true  - Mark as pressure traffic")
-    print("  x-shadow-flag: <value> - Shadow flag")
-    print("  x-pradar-trace: pressure-test - Pressure flag")
-    print("")
-    print("Environment:")
-    print("  MANAGEMENT_URL=http://localhost:9999  - Takin-web URL")
-    print("  APP_NAME=demo-app                     - Application Name")
-    print("  AGENT_ID=pylinkagent-demo             - Agent ID")
-    print("")
-    print("Test Commands:")
-    print("  # Normal traffic")
+    print()
+    print("核心功能: 两门影子路由决策")
+    print("  Gate 1: PradarSwitcher (全局压测开关)")
+    print("  Gate 2: Pradar.set_cluster_test (流量染色)")
+    print()
+    print("端点:")
+    print("  GET  /                  - 首页")
+    print("  GET  /health            - 健康检查")
+    print("  GET  /api/users         - 用户列表 (路由决策)")
+    print("  GET  /api/orders        - 订单列表 (路由决策)")
+    print("  GET  /api/products      - 商品列表 (路由决策)")
+    print("  GET  /api/chain/{id}    - 链路调用 (一致性)")
+    print("  GET  /api/sql/rewrite   - SQL 重写")
+    print("  GET  /routing/decision  - 两门决策详情")
+    print("  GET  /routing/mysql     - ShadowRouter.route_mysql() 真实参数")
+    print("  POST /switch/cluster_test - 压测开关控制")
+    print("  POST /shadow/config     - 注册影子配置")
+    print("  GET  /shadow/status     - 影子状态")
+    print()
+    print("测试命令:")
+    print('  # 正常流量 (路由到业务库)')
     print('  curl http://localhost:8000/api/users')
-    print("")
-    print("  # Pressure traffic")
-    print('  curl http://localhost:8000/api/users -H "x-pressure-test: true"')
-    print("")
+    print()
+    print('  # 压测流量 (路由到影子库)')
+    print('  curl -H "x-pressure-test: true" http://localhost:8000/api/users')
+    print()
+    print('  # 查看两门决策详情')
+    print('  curl -H "x-pressure-test: true" http://localhost:8000/routing/decision')
+    print()
+    print('  # 查看 ShadowRouter 生成的真实影子连接参数')
+    print('  curl -H "x-pressure-test: true" http://localhost:8000/routing/mysql')
     print("=" * 60)
+
+
+def _register_demo_shadow_config():
+    """注册演示用影子库配置 (模拟 ConfigFetcher 从控制台拉取)"""
+    config = ShadowDatabaseConfig(
+        ds_type=0,
+        url="jdbc:mysql://7.198.147.127:3306/wefire_db_sit",
+        username="wefireSitAdmin",
+        shadow_url="jdbc:mysql://7.198.147.127:3306/pt_wefire_db_sit",
+        shadow_username="drpAdmin",
+        shadow_password="Flzx3qc###",
+    )
+    get_config_center().register_db_config(config)
+    logger.info("演示影子库配置已注册: wefire_db_sit → pt_wefire_db_sit")
 
 
 if __name__ == "__main__":
     import uvicorn
-
     print_startup_info()
-
+    _register_demo_shadow_config()
     uvicorn.run(app, host="0.0.0.0", port=8000)

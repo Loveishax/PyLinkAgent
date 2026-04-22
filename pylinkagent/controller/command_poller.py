@@ -215,7 +215,7 @@ class CommandPoller:
             max_workers=2,
             thread_name_prefix="command-poller"
         )
-        self._thread = self._task_executor.submit(self._poll_loop).result()
+        self._thread = self._task_executor.submit(self._poll_loop)
 
         logger.info(f"命令轮询已启动：interval={self.interval}s")
         return True

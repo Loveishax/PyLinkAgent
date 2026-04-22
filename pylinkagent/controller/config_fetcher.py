@@ -92,7 +92,7 @@ class ConfigFetcher:
             max_workers=1,
             thread_name_prefix="config-fetcher"
         )
-        self._thread = self._executor.submit(self._fetch_loop).result()
+        self._thread = self._executor.submit(self._fetch_loop)
 
         logger.info(f"配置拉取已启动：interval={self.interval}s, initial_delay={self.initial_delay}s")
         return True

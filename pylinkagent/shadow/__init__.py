@@ -14,7 +14,7 @@ from .config_center import (
 )
 from .router import ShadowRouter
 from .sql_rewriter import ShadowSQLRewriter
-from .context import ShadowRoutingContext
+from .context import ShadowRoutingContext, get_shadow_context
 
 __all__ = [
     "ShadowDatabaseConfig",
@@ -25,6 +25,7 @@ __all__ = [
     "ShadowRouter",
     "ShadowSQLRewriter",
     "ShadowRoutingContext",
+    "get_shadow_context",
     "get_config_center",
     "get_router",
     "init_config_center",

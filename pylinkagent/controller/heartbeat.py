@@ -95,7 +95,7 @@ class HeartbeatReporter:
 
         self._running = True
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="heartbeat")
-        self._thread = self._executor.submit(self._heartbeat_loop).result()
+        self._thread = self._executor.submit(self._heartbeat_loop)
 
         logger.info(f"心跳上报已启动：interval={self.interval}s")
         return True
