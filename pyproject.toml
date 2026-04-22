@@ -52,10 +52,6 @@ Documentation = "https://pylinkagent.readthedocs.io"
 Repository = "https://github.com/your-org/PyLinkAgent"
 Issues = "https://github.com/your-org/PyLinkAgent/issues"
 
-[project.scripts]
-pylinkagent-run = "pylinkagent.cli:main"
-pylinkagent-cli = "pylinkagent.cli:cli_main"
-
 [tool.setuptools]
 packages = ["pylinkagent", "simulator_agent", "instrument_simulator", "instrument_modules"]
 

@@ -1,205 +1,113 @@
 # PyLinkAgent QuickStart
 
-## 快速开始（5 分钟上手）
+## 快速开始
 
-### 方式一：环境变量注入（推荐，零代码侵入）
+### 方式一：代码导入（推荐）
 
-```bash
-# 1. 安装 PyLinkAgent
-pip install pylinkagent
-
-# 2. 设置环境变量
-export PYLINKAGENT_ENABLED=true
-export PYLINKAGENT_PLATFORM_URL=http://localhost:8080
-export PYLINKAGENT_AGENT_ID=my-app-001
-
-# 3. 启动你的应用（无需修改任何代码）
-python app.py
-```
-
-### 方式二：包装器启动
-
-```bash
-# 使用 pylinkagent-run 包装器
-pylinkagent-run python app.py
-
-# 或指定配置文件
-pylinkagent-run --config /etc/pylinkagent/config.yaml python app.py
-```
-
-### 方式三：代码中导入（最早导入）
+在应用入口导入 pylinkagent 并调用 `bootstrap()`：
 
 ```python
-# 在 app.py 的第一行导入
+import os
+os.environ['MANAGEMENT_URL'] = 'http://localhost:9999'
+os.environ['APP_NAME'] = 'my-app'
+os.environ['AGENT_ID'] = 'agent-001'
+
 import pylinkagent
 pylinkagent.bootstrap()
 
-# 然后是你的应用代码
+# 你的应用代码
 from fastapi import FastAPI
 app = FastAPI()
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World"}
+    return {"hello": "world"}
 ```
 
-## 配置文件示例
-
-### 最小配置（YAML）
-
-```yaml
-# pylinkagent.yaml
-enabled: true
-app_name: my-fastapi-app
-log_level: INFO
-```
-
-### 完整配置
-
-```yaml
-# /etc/pylinkagent/config.yaml
-
-agent_id: "my-app-001"
-app_name: "my-fastapi-app"
-enabled: true
-log_level: "INFO"
-
-platform:
-  url: "http://localhost:8080"
-  api_key: "your-api-key-here"
-  timeout: 30
-
-reporter:
-  enabled: true
-  batch_size: 100
-  flush_interval: 5.0
-
-sampler:
-  trace_sample_rate: 0.1  # 10% 采样率
-
-enabled_modules:
-  - requests
-  - httpx
-  - fastapi
-  - sqlalchemy
-  - redis
-
-module_configs:
-  requests:
-    capture_headers: true
-    capture_body: false
-    ignored_hosts:
-      - localhost
-      - 127.0.0.1
-
-  fastapi:
-    capture_headers: true
-    capture_body: false
-    ignored_paths:
-      - /health
-      - /ready
-      - /metrics
-```
-
-## 验证探针是否工作
-
-### 检查日志输出
+### 方式二：环境变量 + 命令行启动
 
 ```bash
-# 启动后应该看到类似日志
-[INFO] pylinkagent - PyLinkAgent v1.0.0 正在启动...
-[INFO] pylinkagent - Agent 初始化完成，agent_id=my-app-001
-[INFO] pylinkagent - Agent 启动成功
-[INFO] pylinkagent - PyLinkAgent 启动成功
-[INFO] pylinkagent - 正在加载模块：requests
-[INFO] pylinkagent - requests 模块插桩成功
+export MANAGEMENT_URL=http://localhost:9999
+export APP_NAME=my-app
+export AGENT_ID=agent-001
+
+python -c "import pylinkagent; pylinkagent.bootstrap()" &
+# 或直接 import pylinkagent 后再启动应用
+python your_app.py
 ```
 
-### 使用命令行工具检查状态
+### 方式三：作为库单独使用
 
-```bash
-# 查看探针状态
-pylinkagent-cli status
-```
-
-## 完整示例：FastAPI 应用
-
-### 示例应用代码
+不需要完整 bootstrap，可以单独使用各个组件：
 
 ```python
-# app.py
-from fastapi import FastAPI
-import requests
+from pylinkagent.controller.external_api import ExternalAPI, HeartRequest
+from pylinkagent.controller.config_fetcher import ConfigFetcher
 
-app = FastAPI()
+api = ExternalAPI(
+    tro_web_url="http://localhost:9999",
+    app_name="my-app",
+    agent_id="agent-001",
+)
+api.initialize()
 
-@app.get("/")
-def read_root():
-    resp = requests.get("https://httpbin.org/get")
-    return {"hello": "world", "status": resp.status_code}
+# 发送心跳
+req = HeartRequest(project_name="my-app", agent_id="agent-001",
+                   ip_address="192.168.1.100", progress_id=str(os.getpid()))
+api.send_heartbeat(req)
 
-@app.get("/users/{user_id}")
-def get_user(user_id: int):
-    return {"user_id": user_id, "name": f"User {user_id}"}
+# 拉取配置
+configs = api.fetch_shadow_database_config()
+print(f"获取到 {len(configs)} 个影子库配置")
 ```
 
-### 启动命令
+## 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `MANAGEMENT_URL` | Takin-web 地址 | `http://localhost:9999` |
+| `APP_NAME` | 应用名称 | `default-app` |
+| `AGENT_ID` | Agent ID | `pylinkagent-<pid>` |
+| `USER_APP_KEY` | 用户 AppKey | 空 |
+| `TENANT_APP_KEY` | 租户 AppKey | 空 |
+| `USER_ID` | 用户 ID | 空 |
+| `ENV_CODE` | 环境代码 | `test` |
+| `SHADOW_ROUTING` | 启用影子路由 | `true` |
+| `CONFIG_FETCH_INTERVAL` | 配置拉取间隔(秒) | `60` |
+| `HEARTBEAT_INTERVAL` | 心跳间隔(秒) | `60` |
+| `COMMAND_POLL_INTERVAL` | 命令轮询间隔(秒) | `30` |
+| `AUTO_REGISTER_APP` | 自动注册应用 | `true` |
+
+## 验证
 
 ```bash
-# 方式 1：环境变量
-export PYLINKAGENT_ENABLED=true
-export PYLINKAGENT_PLATFORM_URL=http://localhost:8080
-uvicorn app:app --host 0.0.0.0 --port 8000
+# 验证影子路由
+python scripts/verify_shadow_routing.py
 
-# 方式 2：包装器
-pylinkagent-run uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-## 命令行工具使用
-
-```bash
-# 查看帮助
-pylinkagent-cli --help
-
-# 查看探针状态
-pylinkagent-cli status
-
-# 模块管理
-pylinkagent-cli modules list
-pylinkagent-cli modules enable requests
-pylinkagent-cli modules reload fastapi
-
-# 配置管理
-pylinkagent-cli config show
-pylinkagent-cli config set sampler.trace_sample_rate 0.5
-
-# 交互式模式
-pylinkagent-cli shell
+# 综合验证（需要 ZK + 控制台）
+python scripts/comprehensive_verification.py
 ```
 
 ## 故障排查
 
-### 探针未启动
+### 连接被拒绝
 
 ```bash
-# 检查环境变量
-echo $PYLINKAGENT_ENABLED
-echo $PYLINKAGENT_PLATFORM_URL
-
-# 检查是否安装
-pip show pylinkagent
-
-# 检查导入是否正常
-python -c "import pylinkagent; print(pylinkagent.__version__)"
+# 检查控制台是否可访问
+curl http://localhost:9999
 ```
 
-### 模块未加载
+### 配置拉取返回空
 
-```bash
-# 查看日志
-export PYLINKAGENT_LOG_LEVEL=DEBUG
-python app.py
+- 确认应用在控制台已注册
+- 确认已配置影子库数据源
 
-# 检查依赖
-pip show requests fastapi sqlalchemy
-```
+### 影子路由未生效
+
+- 检查 `SHADOW_ROUTING` 环境变量是否为 `true`
+- 确认压测流量已染色（`PradarSwitcher` + `Pradar.is_cluster_test()`）
+
+---
+
+**版本**: v2.0.0
+**更新日期**: 2026-04-23
