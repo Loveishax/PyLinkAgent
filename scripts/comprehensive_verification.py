@@ -372,13 +372,21 @@ def verify_shadow_config_fetch() -> Dict[str, bool]:
 
             # 验证配置格式
             for ds in config_data[:3]:  # 只显示前 3 个
-                print(f"  数据源：{ds.get('dataSourceName', 'N/A')}")
-                print(f"    主库：{ds.get('url', 'N/A')}")
-                print(f"    影子库：{ds.get('shadowUrl', 'N/A')}")
+                print(f"  数据源：{ds.get('url', 'N/A')}")
+                shadow_db = ds.get('shadowDbConfig')
+                if shadow_db:
+                    data_sources = shadow_db.get('dataSources', [])
+                    for sds in data_sources:
+                        role = "业务" if sds.get('id') == 'dataSourceBusiness' else "影子"
+                        print(f"    [{role}] {sds.get('url')} (user={sds.get('username')})")
+                elif ds.get('shadowTableConfig'):
+                    print(f"    [影子表] {ds.get('shadowTableConfig')}")
 
-            if config_data and config_data[0].get('url') and config_data[0].get('shadowUrl'):
-                results['shadow_db_valid'] = True
-                print_result("配置格式验证", True)
+                # 真实 API 格式: 检查 shadowDbConfig 或 shadowTableConfig
+                has_shadow = any(ds.get('shadowDbConfig') or ds.get('shadowTableConfig')
+                                for ds in config_data if ds)
+                results['shadow_db_valid'] = has_shadow
+                print_result("配置格式验证", has_shadow)
         else:
             print_result("影子库配置拉取成功", False, "返回空或失败")
             print("  可能原因：")

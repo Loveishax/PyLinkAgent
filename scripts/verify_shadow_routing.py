@@ -25,6 +25,83 @@ def print_result(name, passed):
     print(f"  [{status}] {name}")
 
 
+def test_real_api_parsing():
+    """测试真实 API 响应格式解析"""
+    print_header("测试 8: 真实 API 格式解析")
+    results = {}
+
+    from pylinkagent.shadow import ShadowDatabaseConfig
+
+    # 真实 API 响应 (dsType=0 影子库)
+    api_data = {
+        "applicationName": "default_test_app",
+        "dsType": 0,
+        "url": "jdbc:mysql://7.198.147.127:3306/wefire_db_sit",
+        "shadowTableConfig": None,
+        "shadowDbConfig": {
+            "datasourceMediator": {
+                "dataSourceBusiness": "dataSourceBusiness",
+                "dataSourcePerformanceTest": "dataSourcePerformanceTest",
+            },
+            "dataSources": [
+                {
+                    "id": "dataSourceBusiness",
+                    "url": "jdbc:mysql://7.198.147.127:3306/wefire_db_sit",
+                    "username": "wefireSitAdmin",
+                    "password": None,
+                },
+                {
+                    "id": "dataSourcePerformanceTest",
+                    "url": "jdbc:mysql://7.198.147.127:3306/pt_wefire_db_sit",
+                    "username": "drpAdmin",
+                    "password": "Flzx3qc###",
+                },
+            ],
+        },
+    }
+
+    config = ShadowDatabaseConfig.from_dict(api_data)
+
+    results['ds_type'] = config.ds_type == 0
+    print_result(f"dsType: {config.ds_type}", config.ds_type == 0)
+
+    results['url'] = 'wefire_db_sit' in config.url
+    print_result(f"业务URL: {config.url}", 'wefire_db_sit' in config.url)
+
+    results['username'] = config.username == 'wefireSitAdmin'
+    print_result(f"业务用户名: {config.username}", config.username == 'wefireSitAdmin')
+
+    results['shadow_url'] = 'pt_wefire_db_sit' in config.shadow_url
+    print_result(f"影子URL: {config.shadow_url}", 'pt_wefire_db_sit' in config.shadow_url)
+
+    results['shadow_username'] = config.shadow_username == 'drpAdmin'
+    print_result(f"影子用户名: {config.shadow_username}", config.shadow_username == 'drpAdmin')
+
+    results['shadow_password'] = config.shadow_password == 'Flzx3qc###'
+    print_result(f"影子密码正确", config.shadow_password == 'Flzx3qc###')
+
+    # dsType=1 影子表模式
+    table_api = {
+        "dsType": 1,
+        "url": "jdbc:mysql://localhost:3306/app",
+        "shadowTableConfig": "users,orders,products",
+        "shadowDbConfig": None,
+    }
+    table_config = ShadowDatabaseConfig.from_dict(table_api)
+    results['table_type'] = table_config.ds_type == 1
+    print_result(f"影子表 dsType: {table_config.ds_type}", table_config.ds_type == 1)
+
+    results['table_mapping'] = len(table_config.business_shadow_tables) == 3
+    print_result(f"影子表映射数量: {len(table_config.business_shadow_tables)}",
+                 len(table_config.business_shadow_tables) == 3)
+
+    results['pt_prefix'] = table_config.business_shadow_tables.get('users') == 'PT_users'
+    print_result(f"users → {table_config.business_shadow_tables.get('users')}",
+                 table_config.business_shadow_tables.get('users') == 'PT_users')
+
+    return results
+
+
 def test_config_center():
     """测试配置中心"""
     print_header("测试 1: 配置中心")
@@ -303,6 +380,7 @@ def main():
     all_results = {}
 
     all_results.update(test_config_center())
+    all_results.update(test_real_api_parsing())
     all_results.update(test_router())
     all_results.update(test_sql_rewriter())
     all_results.update(test_context())

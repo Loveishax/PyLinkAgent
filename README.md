@@ -14,6 +14,7 @@ PyLinkAgent 是一个基于 Python 的链路追踪探针 Agent，与 Takin-web /
 - **配置拉取**: 动态拉取影子库、影子 Job 等配置
 - **命令接收**: 接收并执行控制台下发的命令（安装/升级/卸载）
 - **流量标识**: 识别压测流量并路由到影子库
+- **影子路由**: 零侵入组件拦截 (MySQL/Redis/ES/Kafka/HTTP)
 - **多租户支持**: 支持 tenant_id 和 env_code 隔离
 
 ### 原始插桩功能
@@ -140,21 +141,28 @@ PyLinkAgent/
 ├── pylinkagent/                 # 核心包
 │   ├── controller/              # 控制器
 │   │   ├── external_api.py      # 外部 API (与控制台通信)
-│   │   ├── config_fetcher.py    # 配置拉取器
-│   │   └── command_handler.py   # 命令处理器
-│   ├── simulator_agent/         # 探针 Agent
-│   │   ├── config_manager.py    # 配置管理
-│   │   └── pradar_core.py       # Pradar 核心
-│   └── utils/                   # 工具函数
+│   │   └── config_fetcher.py    # 配置拉取器
+│   ├── shadow/                  # 影子路由
+│   │   ├── config_center.py     # 配置中心 (存储/热更新)
+│   │   ├── router.py            # 路由决策引擎
+│   │   ├── sql_rewriter.py      # SQL 表名重写
+│   │   ├── mysql_interceptor.py # MySQL 拦截
+│   │   ├── redis_interceptor.py # Redis 拦截
+│   │   ├── es_interceptor.py    # ES 拦截
+│   │   ├── kafka_interceptor.py # Kafka 拦截
+│   │   └── http_interceptor.py  # HTTP 拦截
+│   ├── pradar/                  # 链路追踪
+│   ├── zookeeper/               # ZK 集成
 ├── scripts/                     # 脚本
-│   ├── test_takin_web_communication.py  # 通信验证
-│   └── quickstart.py            # 快速启动
+│   ├── verify_shadow_routing.py      # 影子路由验证
+│   └── comprehensive_verification.py # 综合验证
 ├── database/                    # 数据库脚本
 │   └── pylinkagent_tables.sql   # 表定义
 ├── docs/                        # 文档
-│   ├── TAKIN_WEB_INTEGRATION.md # 对接文档
-│   ├── DEPLOYMENT_GUIDE.md      # 部署指南
-│   └── REFACTOR_REPORT.md       # 重构报告
+│   ├── SHADOW_ROUTING_GUIDE.md     # 影子路由指南
+│   ├── COMPREHENSIVE_VERIFICATION_GUIDE.md  # 综合验证指南
+│   ├── ZOOKEEPER_INTEGRATION.md    # ZK 集成
+│   └── architecture.md             # 架构设计
 ├── requirements.txt             # 依赖
 └── README.md                    # 本文档
 ```
@@ -261,9 +269,9 @@ mysql -u root -p takin_web < database/pylinkagent_tables.sql
 
 ## 文档
 
-- [对接文档 (TAKIN_WEB_INTEGRATION.md)](TAKIN_WEB_INTEGRATION.md) - API 接口详细说明
-- [部署指南 (DEPLOYMENT_GUIDE.md)](DEPLOYMENT_GUIDE.md) - 部署和验证步骤
-- [重构报告 (REFACTOR_REPORT.md)](REFACTOR_REPORT.md) - 重构历史和变更说明
+- [影子路由指南 (docs/SHADOW_ROUTING_GUIDE.md)](docs/SHADOW_ROUTING_GUIDE.md) - 影子路由完整流程
+- [综合验证指南 (docs/COMPREHENSIVE_VERIFICATION_GUIDE.md)](docs/COMPREHENSIVE_VERIFICATION_GUIDE.md) - 验证脚本使用说明
+- [架构设计 (docs/architecture.md)](docs/architecture.md) - 架构与插桩设计
 
 ## 故障排查
 

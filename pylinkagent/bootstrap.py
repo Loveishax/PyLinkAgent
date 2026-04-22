@@ -224,15 +224,13 @@ class PyLinkAgentBootstrapper:
     def _on_shadow_config_change(self, config_center) -> None:
         """处理影子配置变更"""
         try:
-            from .controller import ConfigFetcher
             # 从 ConfigFetcher 获取最新配置并更新 config_center
             if self._config_fetcher:
                 config = self._config_fetcher.get_config()
                 if config.shadow_database_configs:
-                    from .shadow.config_center import ShadowDatabaseConfig
                     db_configs = list(config.shadow_database_configs.values())
                     config_center.load_db_configs(db_configs)
-                    logger.info(f"  影子库配置已更新: {len(db_configs)} 个")
+                    logger.info(f"影子库配置已更新: {len(db_configs)} 个")
         except Exception as e:
             logger.warning(f"影子配置变更处理失败: {e}")
 

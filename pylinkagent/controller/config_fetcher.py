@@ -19,36 +19,11 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 from .external_api import ExternalAPI
+from pylinkagent.shadow.config_center import ShadowDatabaseConfig
+from pylinkagent.shadow.config_center import ShadowConfigCenter
 
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ShadowDatabaseConfig:
-    """影子库配置"""
-    datasource_name: str = ""
-    url: str = ""
-    username: str = ""
-    password: str = ""
-    shadow_url: str = ""
-    shadow_username: str = ""
-    shadow_password: str = ""
-    shadow_table_rules: Dict[str, str] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ShadowDatabaseConfig":
-        """从字典创建"""
-        return cls(
-            datasource_name=data.get("dataSourceName", ""),
-            url=data.get("url", ""),
-            username=data.get("username", ""),
-            password=data.get("password", ""),
-            shadow_url=data.get("shadowUrl", ""),
-            shadow_username=data.get("shadowUsername", ""),
-            shadow_password=data.get("shadowPassword", ""),
-            shadow_table_rules=data.get("shadowTableRules", {}),
-        )
 
 
 @dataclass
@@ -195,9 +170,10 @@ class ConfigFetcher:
             if shadow_db_data:
                 for item in shadow_db_data:
                     config = ShadowDatabaseConfig.from_dict(item)
-                    if config.datasource_name:
-                        new_config.shadow_database_configs[config.datasource_name] = config
-                        logger.debug(f"解析影子库配置：{config.datasource_name}")
+                    if config.url:
+                        key = ShadowConfigCenter._normalize_url(config.url)
+                        new_config.shadow_database_configs[key] = config
+                        logger.debug(f"解析影子库配置: {config.url}")
 
             # 2. 保存原始配置
             new_config.raw_config = {

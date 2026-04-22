@@ -34,21 +34,104 @@ class ShadowDatabaseConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ShadowDatabaseConfig":
-        """从 API 返回的字典创建配置"""
-        return cls(
-            datasource_name=data.get("dataSourceName", ""),
-            url=data.get("url", ""),
-            username=data.get("username", ""),
-            password=data.get("password", ""),
-            shadow_url=data.get("shadowUrl", ""),
-            shadow_username=data.get("shadowUsername", ""),
-            shadow_password=data.get("shadowPassword", ""),
-            shadow_account_prefix=data.get("shadowAccountPrefix", "PT_"),
-            shadow_account_suffix=data.get("shadowAccountSuffix", ""),
-            business_shadow_tables=data.get("businessShadowTables", {}),
-            ds_type=int(data.get("dsType", data.get("ds_type", 0))),
-            enabled=True,
-        )
+        """
+        从 API 返回的字典创建配置
+
+        对应 Java ShadowDatabaseConfigParser.parse()
+        真实 API 响应格式:
+        {
+          "dsType": 0,
+          "url": "jdbc:mysql://host:port/db",
+          "shadowTableConfig": "users,orders",  # dsType=1 时
+          "shadowDbConfig": {
+            "datasourceMediator": {
+              "dataSourceBusiness": "dataSourceBusiness",
+              "dataSourcePerformanceTest": "dataSourcePerformanceTest"
+            },
+            "dataSources": [
+              { "id": "dataSourceBusiness",
+                "url": "jdbc:mysql://...", "username": "...", "password": "..." },
+              { "id": "dataSourcePerformanceTest",
+                "url": "jdbc:mysql://...", "username": "...", "password": "..." }
+            ]
+          }
+        }
+        """
+        ds_type = int(data.get("dsType", 0))
+        url = data.get("url", "")
+        config = cls(ds_type=ds_type, url=url, enabled=True)
+
+        # dsType=1: 影子表模式 — 解析 shadowTableConfig
+        if ds_type == 1:
+            table_config = data.get("shadowTableConfig", "")
+            if table_config:
+                prefix = config.shadow_account_prefix
+                for table_name in table_config.split(","):
+                    table_name = table_name.strip()
+                    if table_name:
+                        config.business_shadow_tables[table_name] = f"{prefix}{table_name}"
+            return config
+
+        # dsType=0/2: 影子库模式 — 解析 shadowDbConfig
+        shadow_db_config = data.get("shadowDbConfig")
+        if not shadow_db_config:
+            logger.debug(f"影子库配置缺少 shadowDbConfig: url={url}")
+            return config
+
+        # 获取 dataSource ID 引用
+        mediator = shadow_db_config.get("datasourceMediator", {})
+        business_id = mediator.get("dataSourceBusiness", "dataSourceBusiness")
+        shadow_id = mediator.get("dataSourcePerformanceTest", "dataSourcePerformanceTest")
+
+        # 从 dataSources 数组中按 ID 匹配
+        data_sources = shadow_db_config.get("dataSources", [])
+        business_ds: Dict[str, Any] = {}
+        shadow_ds: Dict[str, Any] = {}
+        for ds in data_sources:
+            ds_id = ds.get("id", "")
+            if ds_id == business_id:
+                business_ds = ds
+            elif ds_id == shadow_id:
+                shadow_ds = ds
+
+        # 业务库信息
+        if business_ds:
+            config.url = business_ds.get("url", url)
+            config.username = business_ds.get("username", "")
+            config.password = cls._resolve_spi_password(business_ds.get("password"))
+
+        # 影子库信息
+        if shadow_ds:
+            config.shadow_url = shadow_ds.get("url", "")
+            config.shadow_username = shadow_ds.get("username", "")
+            config.shadow_password = cls._resolve_spi_password(shadow_ds.get("password"))
+
+            # 影子表映射 (dsType=2 时 shadowTableConfig 可能也有值)
+            if ds_type == 2:
+                table_config = data.get("shadowTableConfig", "")
+                if table_config:
+                    prefix = config.shadow_account_prefix
+                    for table_name in table_config.split(","):
+                        table_name = table_name.strip()
+                        if table_name:
+                            config.business_shadow_tables[table_name] = f"{prefix}{table_name}"
+
+        return config
+
+    @staticmethod
+    def _resolve_spi_password(password: Optional[str]) -> Optional[str]:
+        """
+        解析密码，处理 $<provider##secret> SPI 格式
+
+        对应 Java ShadowDataSourceSPIManager.extractConfigValue()
+        当前暂不解密，原样返回
+        """
+        if not password:
+            return password
+        # SPI 格式: $<vault##my-secret-key>
+        if password.startswith("$<") and password.endswith(">"):
+            logger.debug(f"检测到 SPI 密码格式，当前不解密: {password[:8]}...")
+        return password
 
     @staticmethod
     def jdbc_to_pymysql(jdbc_url: str) -> str:

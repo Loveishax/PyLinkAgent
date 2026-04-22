@@ -179,9 +179,9 @@ ZooKeeper 心跳验证:
 [拉取影子库配置]
 --------------------------------------------------
   [OK] 影子库配置拉取成功：2 个数据源
-  数据源：master
-    主库：jdbc:mysql://master:3306/app
-    影子库：jdbc:mysql://shadow:3306/app_shadow
+  数据源：jdbc:mysql://7.198.147.127:3306/wefire_db_sit
+    [业务] jdbc:mysql://7.198.147.127:3306/wefire_db_sit (user=wefireSitAdmin)
+    [影子] jdbc:mysql://7.198.147.127:3306/pt_wefire_db_sit (user=drpAdmin)
   [OK] 配置格式验证
 
 [拉取远程调用配置]
@@ -313,12 +313,13 @@ pip install kazoo>=2.9.0
 | 文件 | 说明 |
 |------|------|
 | `scripts/comprehensive_verification.py` | 综合验证脚本 |
+| `scripts/verify_shadow_routing.py` | 影子路由验证 |
 | `scripts/test_zk_client_path.py` | 客户端路径测试 |
-| `scripts/test_zk_log_server.py` | 日志服务器测试 |
-| `docs/ZK_CLIENT_PATH_REGISTER.md` | 客户端路径文档 |
-| `docs/ZK_LOG_SERVER_DISCOVERY.md` | 日志服务器文档 |
+| `docs/ZOOKEEPER_INTEGRATION.md` | ZooKeeper 集成文档 |
+| `docs/SHADOW_ROUTING_GUIDE.md` | 影子路由指南 |
 
 ---
 
-**文档完成日期**: 2026-04-17  
-**版本**: v1.0
+**文档完成日期**: 2026-04-17
+**更新日期**: 2026-04-23
+**版本**: v2.0

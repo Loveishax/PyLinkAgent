@@ -39,7 +39,7 @@
 |-----|------|------|----------|------------------|------|
 | `/api/fast/agent/access/config/agentConfig` | GET | 拉取探针动态配置 | ✅ ApplicationConfigHttpResolver.java | ❌ 未实现 | 🔴 缺失 |
 | `/api/remote/call/configs/pull` | GET | 拉取压测白名单 | ✅ ApplicationConfigHttpResolver.java | ⚠️ 定义但未使用 | 🟡 待完善 |
-| `/api/link/ds/configs/pull` | GET | 拉取影子库表配置 | ✅ ApplicationConfigHttpResolver.java | ✅ external_api.py | ✅ 已实现 |
+| `/api/link/ds/configs/pull` | GET | 拉取影子库表配置 | ✅ ApplicationConfigHttpResolver.java | ✅ 已实现 (shadowDbConfig 格式适配) | ✅ 已实现 |
 | `/api/link/ds/server/configs/pull` | GET | 拉取 Redis 影子配置 | ✅ ApplicationConfigHttpResolver.java | ⚠️ 定义但未使用 | 🟡 待完善 |
 | `/api/link/es/server/configs/pull` | GET | 拉取 ES 影子配置 | ✅ ApplicationConfigHttpResolver.java | ❌ 未实现 | 🔴 缺失 |
 | `/api/link/hbase/server/configs/pull` | GET | 拉取 HBase 影子配置 | ✅ ApplicationConfigHttpResolver.java | ❌ 未实现 | 🔴 缺失 |
@@ -363,7 +363,8 @@ class LogServerDiscovery:
 | HTTP 心跳上报 | ✅ 完整实现 |
 | 命令拉取 | ✅ 基础框架 |
 | 命令结果上报 | ✅ 完整实现 |
-| 影子库配置拉取 | ✅ 完整实现 |
+| 影子库配置拉取 | ✅ 完整实现 (含 shadowDbConfig 解析) |
+| 影子路由 | ✅ 完整实现 (MySQL/Redis/ES/Kafka/HTTP) |
 | 配置定时同步 | ✅ 完整实现 |
 
 ### 核心价值主张
