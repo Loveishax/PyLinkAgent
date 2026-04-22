@@ -630,6 +630,63 @@ class ExternalAPI:
             logger.error(f"拉取影子 Job 配置失败：{e}")
             return None
 
+    def fetch_shadow_redis_config(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        拉取影子 Redis 服务器配置
+
+        接口：GET /api/link/ds/server/configs/pull?appName=xxx
+        """
+        if not self._initialized:
+            return None
+
+        url = f"{self.SHADOW_REDIS_SERVER_URL}?appName={self.app_name}"
+        try:
+            response = self._request("GET", url)
+            if response:
+                logger.info(f"影子 Redis 配置拉取成功")
+            return response
+        except Exception as e:
+            logger.error(f"拉取影子 Redis 配置失败：{e}")
+            return None
+
+    def fetch_shadow_es_config(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        拉取影子 Elasticsearch 服务器配置
+
+        接口：GET /api/link/es/server/configs/pull?appName=xxx
+        """
+        if not self._initialized:
+            return None
+
+        url = f"{self.SHADOW_ES_SERVER_URL}?appName={self.app_name}"
+        try:
+            response = self._request("GET", url)
+            if response:
+                logger.info(f"影子 ES 配置拉取成功")
+            return response
+        except Exception as e:
+            logger.error(f"拉取影子 ES 配置失败：{e}")
+            return None
+
+    def fetch_shadow_kafka_config(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        拉取影子 Kafka 消费者配置
+
+        接口：GET /api/agent/configs/shadow/consumer?appName=xxx
+        """
+        if not self._initialized:
+            return None
+
+        url = f"{self.SHADOW_MQ_CONSUMER_URL}?appName={self.app_name}"
+        try:
+            response = self._request("GET", url)
+            if response:
+                logger.info(f"影子 Kafka 配置拉取成功")
+            return response
+        except Exception as e:
+            logger.error(f"拉取影子 Kafka 配置失败：{e}")
+            return None
+
     def download_module(self, download_url: str, target_path: str) -> Optional[str]:
         """
         下载模块包

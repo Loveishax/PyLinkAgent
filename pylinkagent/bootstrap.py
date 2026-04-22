@@ -34,6 +34,7 @@ class PyLinkAgentBootstrapper:
         self._command_poller = None
         self._zk_integration = None
         self._app_registrator = None
+        self._shadow_enabled = False
         self._is_running = False
         self._shutdown_hooks = []
 
@@ -60,26 +61,30 @@ class PyLinkAgentBootstrapper:
             # 3. 初始化 ZooKeeper (P0 任务)
             self._init_zookeeper()
 
-            # 4. 启动配置拉取器
+            # 4. 启动影子路由 (P0 核心功能)
+            self._init_shadow_routing()
+
+            # 5. 启动配置拉取器
             if not self._start_config_fetcher():
                 logger.warning("配置拉取器启动失败，继续启动")
 
-            # 5. 启动心跳上报 (HTTP)
+            # 6. 启动心跳上报 (HTTP)
             if not self._start_heartbeat_reporter():
                 logger.error("心跳上报启动失败")
                 return False
 
-            # 6. 启动命令轮询器
+            # 7. 启动命令轮询器
             if not self._start_command_poller():
                 logger.warning("命令轮询器启动失败，继续启动")
 
-            # 7. 注册关闭钩子
+            # 8. 注册关闭钩子
             self._register_shutdown_hooks()
 
             self._is_running = True
             logger.info("=" * 60)
             logger.info("PyLinkAgent 启动完成")
             logger.info(f"  HTTP 心跳：启用")
+            logger.info(f"  影子路由：{'已启用' if self._shadow_enabled else '未启用'}")
             logger.info(f"  ZK 心跳：{'启用' if self._zk_integration and self._zk_integration.is_running() else '未启用'}")
             logger.info(f"  应用注册：{'已注册' if self._app_registrator and self._app_registrator.is_registered() else '跳过'}")
             logger.info("=" * 60)
@@ -168,6 +173,68 @@ class PyLinkAgentBootstrapper:
             logger.info("  ZooKeeper 集成已启用")
         else:
             logger.info("  ZooKeeper 集成未启用 (降级到 HTTP-only 模式)")
+
+    def _init_shadow_routing(self) -> None:
+        """初始化影子路由 (P0 核心功能)"""
+        shadow_enabled = os.getenv('SHADOW_ROUTING', 'true').lower() == 'true'
+        if not shadow_enabled:
+            logger.info("影子路由已禁用 (SHADOW_ROUTING=false)")
+            return
+
+        logger.info("初始化影子路由...")
+
+        try:
+            from .shadow import get_config_center, get_router
+            from .shadow.mysql_interceptor import MySQLShadowInterceptor
+            from .shadow.redis_interceptor import RedisShadowInterceptor
+            from .shadow.es_interceptor import ESShadowInterceptor
+            from .shadow.kafka_interceptor import KafkaShadowInterceptor
+            from .shadow.http_interceptor import HTTPShadowInterceptor
+
+            # 获取配置中心和路由器
+            config_center = get_config_center()
+            router = get_router()
+
+            # 注册配置变更回调 (ConfigFetcher 拉取到影子配置后自动更新)
+            if self._config_fetcher:
+                self._config_fetcher.on_config_change(
+                    lambda key, old, new: self._on_shadow_config_change(config_center)
+                )
+
+            # 启动所有拦截器
+            interceptors = [
+                MySQLShadowInterceptor(router),
+                RedisShadowInterceptor(router),
+                ESShadowInterceptor(router),
+                KafkaShadowInterceptor(router),
+                HTTPShadowInterceptor(router),
+            ]
+
+            patched_count = 0
+            for interceptor in interceptors:
+                if interceptor.patch():
+                    patched_count += 1
+
+            self._shadow_enabled = True
+            logger.info(f"  影子路由已启用 ({patched_count}/{len(interceptors)} 个拦截器)")
+
+        except Exception as e:
+            logger.warning(f"  影子路由初始化失败: {e} (降级到正常模式)")
+
+    def _on_shadow_config_change(self, config_center) -> None:
+        """处理影子配置变更"""
+        try:
+            from .controller import ConfigFetcher
+            # 从 ConfigFetcher 获取最新配置并更新 config_center
+            if self._config_fetcher:
+                config = self._config_fetcher.get_config()
+                if config.shadow_database_configs:
+                    from .shadow.config_center import ShadowDatabaseConfig
+                    db_configs = list(config.shadow_database_configs.values())
+                    config_center.load_db_configs(db_configs)
+                    logger.info(f"  影子库配置已更新: {len(db_configs)} 个")
+        except Exception as e:
+            logger.warning(f"影子配置变更处理失败: {e}")
 
     def _start_config_fetcher(self) -> bool:
         """启动配置拉取器"""
@@ -263,7 +330,26 @@ class PyLinkAgentBootstrapper:
             shutdown_zk()
             logger.info("  ZooKeeper 已关闭")
 
-        # 5. 关闭 ExternalAPI
+        # 5. 关闭影子路由
+        if self._shadow_enabled:
+            try:
+                from .shadow.mysql_interceptor import MySQLShadowInterceptor
+                from .shadow.redis_interceptor import RedisShadowInterceptor
+                from .shadow.es_interceptor import ESShadowInterceptor
+                from .shadow.kafka_interceptor import KafkaShadowInterceptor
+                from .shadow.http_interceptor import HTTPShadowInterceptor
+                for cls in [MySQLShadowInterceptor, RedisShadowInterceptor, ESShadowInterceptor, KafkaShadowInterceptor, HTTPShadowInterceptor]:
+                    try:
+                        instance = cls.__new__(cls)
+                        instance._patched = True
+                        instance.unpatch()
+                    except Exception:
+                        pass
+                logger.info("  影子路由已关闭")
+            except Exception:
+                pass
+
+        # 6. 关闭 ExternalAPI
         if self._external_api:
             self._external_api.shutdown()
             logger.info("  ExternalAPI 已关闭")

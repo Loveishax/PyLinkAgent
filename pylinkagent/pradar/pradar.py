@@ -25,6 +25,9 @@ class Pradar:
     CLUSTER_TEST_ON = "1"
     CLUSTER_TEST_OFF = "0"
 
+    # 压测表前缀 (与 Java LinkAgent 一致)
+    CLUSTER_TEST_PREFIX = "PT_"
+
     # 调试标识
     DEBUG_ON = "1"
     DEBUG_OFF = "0"
@@ -398,3 +401,22 @@ class Pradar:
         ctx_manager = get_context_manager()
         ctx_manager.clear()
         logger.debug("Pradar.clear: 上下文已清空")
+
+    # ==================== 压测表名工具 ====================
+
+    @classmethod
+    def add_cluster_test_prefix(cls, value: str) -> str:
+        """为表名添加压测前缀"""
+        return cls.CLUSTER_TEST_PREFIX + value
+
+    @classmethod
+    def is_cluster_test_table(cls, table_name: str) -> bool:
+        """判断是否是压测表名"""
+        return table_name.upper().startswith(cls.CLUSTER_TEST_PREFIX.upper())
+
+    @classmethod
+    def remove_cluster_test_prefix(cls, value: str) -> str:
+        """移除压测前缀"""
+        if value.upper().startswith(cls.CLUSTER_TEST_PREFIX.upper()):
+            return value[len(cls.CLUSTER_TEST_PREFIX):]
+        return value
