@@ -1,79 +1,70 @@
 """
-PyLinkAgent Demo Application - 影子路由全链路演示
+PyLinkAgent Demo Application — 真实 MySQL 影子路由演示
 
-演示 PyLinkAgent 两门影子路由决策:
-  Gate 1: PradarSwitcher.is_cluster_test_enabled() - 全局压测开关
-  Gate 2: Pradar.is_cluster_test()               - 当前请求流量染色
+使用本地 MySQL 验证完整影子路由:
+  业务库: wefire_db_sit (root@localhost:3306)
+  影子库: pt_wefire_db_sit (root@localhost:3306)
+
+两门影子路由决策:
+  Gate 1: PradarSwitcher.is_cluster_test_enabled() — 全局压测开关
+  Gate 2: Pradar.is_cluster_test()               — 当前请求流量染色
+
+  ShadowRouter.should_route() = Gate1 && Gate2
 
 数据流:
-  HTTP Header (x-pressure-test)
-    -> Middleware 检测压测 Header
-    -> PradarSwitcher.turn_cluster_test_switch_on()   [Gate 1]
-    -> Pradar.start_trace() + Pradar.set_cluster_test(True)  [Gate 2]
-    -> ShadowRouter.should_route() = Gate1 && Gate2
-    -> 路由到业务数据 or 影子数据
-    -> Pradar.end_trace() 清理
+  HTTP Request → Middleware 检测 Header → Pradar 压测标记
+    → ShadowRouter.route_mysql() 生成影子连接参数
+    → pymysql.connect(shadow_params) → 真实影子库查询
+    → Pradar.end_trace() 清理
 """
 
 import os
+import pymysql
+from pymysql.cursors import DictCursor
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-import time
 import logging
 
 # ==================== PyLinkAgent 影子路由模块 ====================
 
 from pylinkagent.pradar import Pradar, PradarSwitcher
 from pylinkagent.shadow import (
-    get_router, get_config_center, get_shadow_context,
+    get_router, get_config_center,
     ShadowDatabaseConfig, ShadowSQLRewriter,
 )
 
-# ==================== 模拟数据库 ====================
+logger = logging.getLogger(__name__)
 
-USERS_DB = [
-    {"id": 1, "name": "张三", "email": "zhangsan@example.com"},
-    {"id": 2, "name": "李四", "email": "lisi@example.com"},
-    {"id": 3, "name": "王五", "email": "wangwu@example.com"},
-]
+# ==================== 数据库配置 ====================
 
-SHADOW_USERS_DB = [
-    {"id": 1, "name": "影子用户 张三", "email": "pt_zhangsan@test.com", "is_shadow": True},
-    {"id": 2, "name": "影子用户 李四", "email": "pt_lisi@test.com", "is_shadow": True},
-    {"id": 3, "name": "影子用户 王五", "email": "pt_wangwu@test.com", "is_shadow": True},
-]
+BUSINESS_DB = {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "123456",
+    "database": "wefire_db_sit",
+    "charset": "utf8mb4",
+}
 
-ORDERS_DB = [
-    {"id": 101, "user_id": 1, "amount": 99.99, "status": "已支付"},
-    {"id": 102, "user_id": 2, "amount": 199.99, "status": "待发货"},
-]
+SHADOW_DB = {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "123456",
+    "database": "pt_wefire_db_sit",
+    "charset": "utf8mb4",
+}
 
-SHADOW_ORDERS_DB = [
-    {"id": 101, "user_id": 1, "amount": 999.99, "status": "影子已支付", "is_shadow": True},
-    {"id": 102, "user_id": 2, "amount": 1999.99, "status": "影子待发货", "is_shadow": True},
-]
-
-PRODUCTS_DB = [
-    {"id": 1, "name": "iPhone 15", "price": 7999},
-    {"id": 2, "name": "MacBook Pro", "price": 14999},
-]
-
-SHADOW_PRODUCTS_DB = [
-    {"id": 1, "name": "影子 iPhone 15", "price": 9999, "is_shadow": True},
-    {"id": 2, "name": "影子 MacBook Pro", "price": 19999, "is_shadow": True},
-]
-
-# ==================== 应用 ====================
+# JDBC URL (用于 ShadowRouter 配置注册)
+BUSINESS_JDBC_URL = "jdbc:mysql://localhost:3306/wefire_db_sit"
 
 app = FastAPI(
-    title="PyLinkAgent Demo",
-    description="影子路由全链路演示 (Pradar + ShadowRouter)",
-    version="2.0",
+    title="PyLinkAgent Demo — 真实 MySQL 影子路由",
+    description="使用本地 MySQL 验证完整影子路由流程",
+    version="3.0",
 )
-
-logger = logging.getLogger(__name__)
 
 
 # ==================== 影子路由中间件 ====================
@@ -85,19 +76,19 @@ async def shadow_routing_middleware(request: Request, call_next):
 
     每个请求经过此中间件:
     1. 检测 x-pressure-test Header
-    2. 打开全局压测开关 (Gate 1)
-    3. 创建 Pradar Trace 并标记压测 (Gate 2)
-    4. ShadowRouter.should_route() 做路由决策
-    5. 将路由结果存入 request.state
-    6. 请求结束后清理 Pradar 上下文
+    2. PradarSwitcher 打开全局开关 (Gate 1)
+    3. Pradar 创建 Trace 并标记压测 (Gate 2)
+    4. ShadowRouter.should_route() = Gate1 && Gate2
+    5. ShadowRouter.route_mysql() 生成影子连接参数
+    6. 存入 request.state 供业务端点使用
+    7. 请求结束后清理 Pradar 上下文
     """
-    # 提取压测 Header
     is_pressure = (
         request.headers.get("x-pressure-test", "").lower() == "true"
         or request.headers.get("x-shadow-flag") is not None
     )
 
-    routing_info = {
+    routing = {
         "is_pressure_header": is_pressure,
         "gate1_global_switch": False,
         "gate2_traffic_dye": False,
@@ -108,72 +99,87 @@ async def shadow_routing_middleware(request: Request, call_next):
 
     try:
         if is_pressure:
-            # Gate 1: 打开全局压测开关
             PradarSwitcher.turn_cluster_test_switch_on()
-            routing_info["gate1_global_switch"] = True
+            routing["gate1_global_switch"] = True
 
-            # Gate 2: 创建 Trace 并标记为压测流量
             ctx = Pradar.start_trace("demo-app", "web", request.url.path)
             Pradar.set_cluster_test(True)
-            routing_info["gate2_traffic_dye"] = True
-            routing_info["trace_id"] = ctx.trace_id
-
-            # Pradar 用户数据透传
+            routing["gate2_traffic_dye"] = True
+            routing["trace_id"] = ctx.trace_id
             Pradar.set_user_data("source", "demo_middleware")
 
-        # 两门决策: ShadowRouter.should_route()
         router = get_router()
         should_route = router.should_route()
-        routing_info["should_route"] = should_route
-        routing_info["target"] = "shadow" if should_route else "business"
+        routing["should_route"] = should_route
+        routing["target"] = "shadow" if should_route else "business"
 
-        # ShadowRouter.route_mysql() 生成真实影子连接参数
-        # 必须在 Pradar 上下文中调用 (should_route 依赖 is_cluster_test)
+        # ShadowRouter.route_mysql() 在 Pradar 上下文中生成影子连接参数
         if should_route:
-            business_url = "jdbc:mysql://7.198.147.127:3306/wefire_db_sit"
             shadow_conn = router.route_mysql(
-                original_url=business_url,
-                original_username="wefireSitAdmin",
+                original_url=BUSINESS_JDBC_URL,
+                original_username=BUSINESS_DB["user"],
             )
             if shadow_conn and "host" in shadow_conn:
-                routing_info["shadow_mysql"] = {
+                routing["shadow_mysql"] = {
                     "host": shadow_conn.get("host"),
                     "port": shadow_conn.get("port"),
                     "database": shadow_conn.get("database"),
                     "user": shadow_conn.get("user"),
                 }
 
-        # 存入 request.state 供业务端点使用
-        request.state.routing = routing_info
-
+        request.state.routing = routing
         response = await call_next(request)
         return response
 
     finally:
-        # 清理 Pradar 上下文 (仅压测请求有)
         if Pradar.has_context():
             Pradar.end_trace()
 
-        # 如果当前请求没有压力但全局开关开着，保留开关状态
-        # 这样后续没有 Header 的请求也能被路由到影子库
-        # (实际场景中，全局开关由控制台远程控制)
+
+# ==================== 数据库查询函数 ====================
+
+def query_business(sql: str, params=None) -> List[Dict]:
+    """查询业务库"""
+    conn = pymysql.connect(**BUSINESS_DB)
+    try:
+        with conn.cursor(DictCursor) as cur:
+            cur.execute(sql, params or ())
+            return cur.fetchall()
+    finally:
+        conn.close()
 
 
-# ==================== 路由辅助函数 ====================
+def query_shadow(sql: str, params=None) -> List[Dict]:
+    """查询影子库"""
+    conn = pymysql.connect(**SHADOW_DB)
+    try:
+        with conn.cursor(DictCursor) as cur:
+            cur.execute(sql, params or ())
+            return cur.fetchall()
+    finally:
+        conn.close()
 
-def route_data(business_data, shadow_data, request: Request):
+
+def query_routed(sql: str, params=None, request: Request = None):
     """
-    根据路由决策返回数据
+    路由查询 — 根据中间件决策选择业务库或影子库
 
-    从 request.state.routing 读取中间件决策结果
+    在真实环境中，这会被 wrapt 拦截器自动完成:
+    pymysql.connect(host='localhost') → 拦截 → connect(host=shadow_host, db=shadow_db)
     """
-    routing = getattr(request.state, "routing", {})
+    routing = getattr(getattr(request, "state", None), "routing", {})
     is_shadow = routing.get("should_route", False)
-    data = shadow_data if is_shadow else business_data
+
+    if is_shadow:
+        data = query_shadow(sql, params)
+    else:
+        data = query_business(sql, params)
+
     return {
         "data": data,
         "routing": {
             "target": "shadow" if is_shadow else "business",
+            "database": SHADOW_DB["database"] if is_shadow else BUSINESS_DB["database"],
             "gate1_global_switch": routing.get("gate1_global_switch", False),
             "gate2_traffic_dye": routing.get("gate2_traffic_dye", False),
             "trace_id": routing.get("trace_id", ""),
@@ -187,72 +193,97 @@ def route_data(business_data, shadow_data, request: Request):
 def index():
     """首页"""
     return """
-<!DOCTYPE html><html><head><title>PyLinkAgent Demo</title>
+<!DOCTYPE html><html><head><title>PyLinkAgent — 真实 MySQL 影子路由</title>
 <style>body{font-family:monospace;margin:40px;background:#1a1a2e;color:#e0e0e0}
-.container{max-width:800px;margin:0 auto}
+.container{max-width:900px;margin:0 auto}
 h1{color:#00d4ff}h2{color:#7b68ee;margin-top:30px}
 .endpoint{background:#16213e;padding:12px;margin:8px 0;border-radius:4px;border-left:3px solid #00d4ff}
 .method{color:#00d4ff;font-weight:bold}
 code{background:#0f3460;padding:2px 8px;border-radius:3px}
 .pressure{background:#1a1a3e;border-left-color:#ff6b6b}
 .info{background:#0f3460;padding:15px;margin-top:15px;border-radius:4px}
+.db-info{display:flex;gap:20px;margin:10px 0}
+.db-card{flex:1;background:#16213e;padding:15px;border-radius:4px}
+.db-card h3{margin:0 0 8px 0;color:#00d4ff}
+.arrow{text-align:center;font-size:24px;color:#ff6b6b}
 </style></head><body><div class="container">
-<h1>PyLinkAgent Demo</h1><p>影子路由全链路演示</p>
+<h1>PyLinkAgent — 真实 MySQL 影子路由</h1>
+<p>使用本地 MySQL 验证完整影子路由流程</p>
+
+<h2>数据库配置</h2>
+<div class="db-info">
+<div class="db-card"><h3>业务库</h3><code>wefire_db_sit</code><br>root@localhost:3306<br>3 users, 3 orders, 2 products</div>
+<div class="db-card"><h3>影子库</h3><code>pt_wefire_db_sit</code><br>root@localhost:3306<br>3 shadow users, 3 shadow orders, 2 shadow products</div>
+</div>
+
 <h2>API 端点</h2>
 <div class="endpoint"><span class="method">GET</span> <code>/health</code> 健康检查</div>
-<div class="endpoint"><span class="method">GET</span> <code>/api/users</code> 用户列表</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/users</code> 用户列表 (真实 MySQL)</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/users/{id}</code> 用户详情</div>
 <div class="endpoint"><span class="method">GET</span> <code>/api/orders</code> 订单列表</div>
 <div class="endpoint"><span class="method">GET</span> <code>/api/products</code> 商品列表</div>
-<div class="endpoint"><span class="method">GET</span> <code>/api/chain/{user_id}</code> 链路调用</div>
+<div class="endpoint"><span class="method">GET</span> <code>/api/chain/{user_id}</code> 链路调用 (跨表)</div>
 <div class="endpoint pressure"><span class="method">GET</span> <code>/api/sql/rewrite?sql=...</code> SQL 重写</div>
-<div class="endpoint pressure"><span class="method">POST</span> <code>/shadow/config</code> 注册影子配置</div>
-<div class="endpoint"><span class="method">GET</span> <code>/shadow/status</code> 影子状态</div>
+<div class="endpoint"><span class="method">GET</span> <code>/db/query?sql=...</code> 执行任意 SQL</div>
 <div class="endpoint"><span class="method">GET</span> <code>/routing/decision</code> 两门决策详情</div>
+<div class="endpoint"><span class="method">GET</span> <code>/routing/mysql</code> ShadowRouter 连接参数</div>
 <div class="endpoint pressure"><span class="method">POST</span> <code>/switch/cluster_test</code> 压测开关控制</div>
+
+<h2>测试命令</h2>
 <div class="info">
-<h3>压测流量标识</h3>
-<p><code>curl http://localhost:8000/api/users</code> — 正常流量</p>
-<p><code>curl -H "x-pressure-test: true" http://localhost:8000/api/users</code> — 压测流量</p>
+<p><code>curl http://localhost:8000/api/users</code> — 业务库</p>
+<p><code>curl -H "x-pressure-test: true" http://localhost:8000/api/users</code> — 影子库</p>
+<p><code>curl -H "x-pressure-test: true" http://localhost:8000/db/query?sql=SELECT%20*%20FROM%20users</code> — 任意 SQL</p>
 </div></div></body></html>
 """
 
 
 @app.get("/health")
 def health():
-    """健康检查"""
+    """健康检查 + 数据库连通性"""
+    try:
+        conn = pymysql.connect(**BUSINESS_DB)
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users")
+            user_count = cur.fetchone()[0]
+        conn.close()
+        db_status = "ok"
+    except Exception as e:
+        user_count = None
+        db_status = f"error: {e}"
+
     return {
         "status": "healthy",
-        "service": "pylinkagent-demo-v2",
+        "service": "pylinkagent-demo-v3",
+        "business_db": db_status,
+        "business_db_users": user_count,
         "cluster_test_switch": PradarSwitcher.is_cluster_test_enabled(),
     }
 
 
 @app.get("/api/users")
 def list_users(request: Request):
-    """用户列表 — 路由决策由中间件完成"""
-    return route_data(USERS_DB, SHADOW_USERS_DB, request)
+    """用户列表 — 真实 MySQL 查询"""
+    return query_routed("SELECT * FROM users ORDER BY id", request=request)
 
 
 @app.get("/api/users/{user_id}")
 def get_user(user_id: int, request: Request):
     """用户详情"""
-    result = route_data(USERS_DB, SHADOW_USERS_DB, request)
-    for user in result["data"]:
-        if user["id"] == user_id:
-            return {"data": [user], "routing": result["routing"]}
-    raise HTTPException(404, "User not found")
+    result = query_routed("SELECT * FROM users WHERE id = %s", (user_id,), request=request)
+    return result
 
 
 @app.get("/api/orders")
 def list_orders(request: Request):
     """订单列表"""
-    return route_data(ORDERS_DB, SHADOW_ORDERS_DB, request)
+    return query_routed("SELECT * FROM orders ORDER BY id", request=request)
 
 
 @app.get("/api/products")
 def list_products(request: Request):
     """商品列表"""
-    return route_data(PRODUCTS_DB, SHADOW_PRODUCTS_DB, request)
+    return query_routed("SELECT * FROM products ORDER BY id", request=request)
 
 
 # ==================== 链路调用演示 ====================
@@ -262,22 +293,24 @@ def chain_call(user_id: int, request: Request):
     """
     链路调用演示
 
-    在一次请求中查询用户 + 订单，展示影子路由的一致性
+    在同一个请求中查询用户 + 订单，展示影子路由的一致性
     """
     routing = getattr(request.state, "routing", {})
     is_shadow = routing.get("should_route", False)
 
-    users = SHADOW_USERS_DB if is_shadow else USERS_DB
-    orders = SHADOW_ORDERS_DB if is_shadow else ORDERS_DB
-
-    user = next((u for u in users if u["id"] == user_id), None)
-    user_orders = [o for o in orders if o["user_id"] == user_id]
+    if is_shadow:
+        users = query_shadow("SELECT * FROM users WHERE id = %s", (user_id,))
+        orders = query_shadow("SELECT * FROM orders WHERE user_id = %s", (user_id,))
+    else:
+        users = query_business("SELECT * FROM users WHERE id = %s", (user_id,))
+        orders = query_business("SELECT * FROM orders WHERE user_id = %s", (user_id,))
 
     return {
-        "user": user,
-        "orders": user_orders,
+        "user": users[0] if users else None,
+        "orders": orders,
         "routing": {
             "target": "shadow" if is_shadow else "business",
+            "database": SHADOW_DB["database"] if is_shadow else BUSINESS_DB["database"],
             "trace_id": routing.get("trace_id", ""),
             "gate1_switch": routing.get("gate1_global_switch", False),
             "gate2_dye": routing.get("gate2_traffic_dye", False),
@@ -295,7 +328,7 @@ def sql_rewrite(
     """
     SQL 重写演示
 
-    使用 ShadowSQLRewriter 将业务表名替换为影子表名
+    ShadowSQLRewriter 将业务表名替换为影子表名
     """
     routing = getattr(getattr(request, "state", None), "routing", {})
     is_shadow = routing.get("should_route", False)
@@ -316,6 +349,21 @@ def sql_rewrite(
         "table_mapping": table_mapping,
         "needs_rewrite": rewriter.needs_rewrite(sql),
     }
+
+
+# ==================== 任意 SQL 查询 ====================
+
+@app.get("/db/query")
+def execute_query(
+    sql: str = "SELECT * FROM users",
+    request: Request = None,
+):
+    """
+    执行任意 SQL 查询
+
+    根据中间件路由决策选择业务库或影子库
+    """
+    return query_routed(sql, request=request)
 
 
 # ==================== 影子配置管理 ====================
@@ -377,17 +425,9 @@ def routing_decision(
     request: Request = None,
     x_pressure_test: Optional[str] = Header(None),
 ):
-    """
-    两门决策详情
-
-    展示当前请求经过两门决策的完整信息:
-    - Gate 1: PradarSwitcher 全局开关状态
-    - Gate 2: Pradar 当前请求压测标记
-    - Result: ShadowRouter.should_route() = Gate1 && Gate2
-    """
+    """展示当前请求经过两门决策的完整信息"""
     routing = getattr(getattr(request, "state", None), "routing", {})
 
-    # 额外获取 Pradar 上下文信息
     ctx_info = {}
     if Pradar.has_context():
         ctx = Pradar.get_context()
@@ -412,14 +452,10 @@ def routing_decision(
             "cluster_test_enabled": PradarSwitcher.is_cluster_test_enabled(),
             "cluster_test_switch": PradarSwitcher._cluster_test_switch,
         },
-        "how_to_test": {
-            "business": "curl http://localhost:8000/routing/decision",
-            "shadow": 'curl -H "x-pressure-test: true" http://localhost:8000/routing/decision',
-        },
     }
 
 
-# ==================== 影子连接参数演示 ====================
+# ==================== ShadowRouter 连接参数 ====================
 
 @app.get("/routing/mysql")
 def route_mysql_demo(
@@ -430,49 +466,25 @@ def route_mysql_demo(
     演示 ShadowRouter.route_mysql() 真实生成影子连接参数
 
     生产环境中，wrapt 拦截器会:
-    1. 拦截 pymysql.connect(host='7.198.147.127', port=3306, db='wefire_db_sit')
+    1. 拦截 pymysql.connect(host='localhost', db='wefire_db_sit')
     2. 调用 ShadowRouter.route_mysql() 获取影子连接参数
-    3. 替换为 ShadowRouter 返回的影子库 host/user/db
+    3. 替换为 ShadowRouter 返回的影子库参数
     """
     routing = getattr(getattr(request, "state", None), "routing", {})
     shadow_mysql = routing.get("shadow_mysql")
 
-    # 模拟业务库连接参数 (对应真实 API 中的 wefire_db_sit)
-    business_url = "jdbc:mysql://7.198.147.127:3306/wefire_db_sit"
-    business_user = "wefireSitAdmin"
-
-    result = {
+    return {
         "routing_decision": routing,
-        "business_connection": {
-            "url": business_url,
-            "pymysql_url": ShadowDatabaseConfig.jdbc_to_pymysql(business_url),
-            "username": business_user,
-        },
-    }
-
-    if shadow_mysql:
-        result["shadow_connection"] = {
-            "generated_by": "ShadowRouter.route_mysql() (in middleware)",
-            "host": shadow_mysql.get("host"),
-            "port": shadow_mysql.get("port"),
-            "database": shadow_mysql.get("database"),
-            "user": shadow_mysql.get("user"),
-            "pymysql_url": f"mysql+pymysql://{shadow_mysql.get('user')}@{shadow_mysql.get('host')}:{shadow_mysql.get('port')}/{shadow_mysql.get('database')}",
-        }
-        result["interceptor_behavior"] = (
-            f"pymysql.connect(host='7.198.147.127') "
-            f"→ 拦截替换 → "
-            f"connect(host={shadow_mysql.get('host')}, "
-            f"user={shadow_mysql.get('user')}, "
-            f"db={shadow_mysql.get('database')})"
-        )
-    else:
-        result["shadow_connection"] = None
-        result["interceptor_behavior"] = (
+        "business_connection": BUSINESS_DB,
+        "shadow_connection": shadow_mysql,
+        "interceptor_behavior": (
+            f"pymysql.connect(host='{BUSINESS_DB['host']}', db='{BUSINESS_DB['database']}') "
+            f"→ 压测流量，拦截替换 → "
+            f"connect(host='{shadow_mysql['host']}', db='{shadow_mysql['database']}')"
+            if shadow_mysql else
             "无压测流量，拦截器不做替换，直接使用业务库连接"
-        )
-
-    return result
+        ),
+    }
 
 
 # ==================== 压测开关控制 ====================
@@ -503,56 +515,60 @@ def control_cluster_test(control: SwitchControl):
 
 # ==================== 启动 ====================
 
+def _register_demo_shadow_config():
+    """注册演示用影子库配置到 ShadowConfigCenter"""
+    config = ShadowDatabaseConfig(
+        ds_type=0,
+        url=BUSINESS_JDBC_URL,
+        username=BUSINESS_DB["user"],
+        password=BUSINESS_DB["password"],
+        shadow_url=f"jdbc:mysql://localhost:3306/pt_wefire_db_sit",
+        shadow_username=SHADOW_DB["user"],
+        shadow_password=SHADOW_DB["password"],
+    )
+    get_config_center().register_db_config(config)
+    logger.info(f"演示影子库配置已注册: wefire_db_sit → pt_wefire_db_sit")
+
+
 def print_startup_info():
     print("=" * 60)
-    print("PyLinkAgent Demo v2.0 — 影子路由全链路")
+    print("PyLinkAgent Demo v3.0 — 真实 MySQL 影子路由")
     print("=" * 60)
     print()
-    print("核心功能: 两门影子路由决策")
+    print("业务库: wefire_db_sit (root@localhost:3306)")
+    print("影子库: pt_wefire_db_sit (root@localhost:3306)")
+    print()
+    print("核心功能: Pradar 两门路由 + 真实 MySQL 查询")
     print("  Gate 1: PradarSwitcher (全局压测开关)")
     print("  Gate 2: Pradar.set_cluster_test (流量染色)")
     print()
     print("端点:")
     print("  GET  /                  - 首页")
-    print("  GET  /health            - 健康检查")
-    print("  GET  /api/users         - 用户列表 (路由决策)")
-    print("  GET  /api/orders        - 订单列表 (路由决策)")
-    print("  GET  /api/products      - 商品列表 (路由决策)")
-    print("  GET  /api/chain/{id}    - 链路调用 (一致性)")
+    print("  GET  /health            - 健康检查 + DB 连通性")
+    print("  GET  /api/users         - 用户列表 (真实 MySQL)")
+    print("  GET  /api/orders        - 订单列表")
+    print("  GET  /api/products      - 商品列表")
+    print("  GET  /api/chain/{id}    - 链路调用 (跨表)")
     print("  GET  /api/sql/rewrite   - SQL 重写")
+    print("  GET  /db/query?sql=...  - 执行任意 SQL")
     print("  GET  /routing/decision  - 两门决策详情")
-    print("  GET  /routing/mysql     - ShadowRouter.route_mysql() 真实参数")
+    print("  GET  /routing/mysql     - ShadowRouter 连接参数")
     print("  POST /switch/cluster_test - 压测开关控制")
-    print("  POST /shadow/config     - 注册影子配置")
     print("  GET  /shadow/status     - 影子状态")
     print()
     print("测试命令:")
-    print('  # 正常流量 (路由到业务库)')
-    print('  curl http://localhost:8000/api/users')
+    print("  # 正常流量 — 业务库 (wefire_db_sit)")
+    print("  curl http://localhost:8000/api/users | python -m json.tool")
     print()
-    print('  # 压测流量 (路由到影子库)')
-    print('  curl -H "x-pressure-test: true" http://localhost:8000/api/users')
+    print("  # 压测流量 — 影子库 (pt_wefire_db_sit)")
+    print('  curl -H "x-pressure-test: true" http://localhost:8000/api/users | python -m json.tool')
     print()
-    print('  # 查看两门决策详情')
-    print('  curl -H "x-pressure-test: true" http://localhost:8000/routing/decision')
+    print("  # 任意 SQL (压测)")
+    print('  curl -H "x-pressure-test: true" "http://localhost:8000/db/query?sql=SELECT * FROM users" | python -m json.tool')
     print()
-    print('  # 查看 ShadowRouter 生成的真实影子连接参数')
-    print('  curl -H "x-pressure-test: true" http://localhost:8000/routing/mysql')
+    print("  # 两门决策详情 (压测)")
+    print('  curl -H "x-pressure-test: true" http://localhost:8000/routing/decision | python -m json.tool')
     print("=" * 60)
-
-
-def _register_demo_shadow_config():
-    """注册演示用影子库配置 (模拟 ConfigFetcher 从控制台拉取)"""
-    config = ShadowDatabaseConfig(
-        ds_type=0,
-        url="jdbc:mysql://7.198.147.127:3306/wefire_db_sit",
-        username="wefireSitAdmin",
-        shadow_url="jdbc:mysql://7.198.147.127:3306/pt_wefire_db_sit",
-        shadow_username="drpAdmin",
-        shadow_password="Flzx3qc###",
-    )
-    get_config_center().register_db_config(config)
-    logger.info("演示影子库配置已注册: wefire_db_sit → pt_wefire_db_sit")
 
 
 if __name__ == "__main__":
