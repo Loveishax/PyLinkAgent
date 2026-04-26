@@ -1,8 +1,13 @@
-# PyLinkAgent ZooKeeper 集成现状
+# ZooKeeper 集成现状
 
-这份文档只描述当前代码现状，不再使用“已经与 Java 完整对齐”这类表述。
+## 1. 当前目标
 
-## 1. 当前已有能力
+Python 探针在 ZK 侧当前优先保证两件事：
+
+- 应用启动后能创建在线节点
+- 节点字段风格尽量接近 Java Agent，便于控制台和排障工具识别
+
+## 2. 当前已接通
 
 代码位置：
 
@@ -10,97 +15,75 @@
 - `pylinkagent/zookeeper/zk_client.py`
 - `pylinkagent/zookeeper/zk_heartbeat.py`
 - `pylinkagent/zookeeper/zk_client_path.py`
-- `pylinkagent/zookeeper/zk_log_server.py`
 - `pylinkagent/controller/zk_integration.py`
 
-当前已具备：
+当前已实现：
 
-- ZK 配置加载
-- kazoo 客户端封装
-- Agent 在线心跳节点
-- 基础 heartbeat data 组装
-- client path 和 log server discovery 的基础类
+- Kazoo 客户端封装
+- ZK 连接与重连监听
+- 在线节点创建
+- 节点数据刷新
+- 断连后的基础恢复逻辑
 
-## 2. 当前主链路实际接入情况
+## 3. 节点路径规则
 
-`bootstrap()` 默认会尝试初始化 ZK：
-
-1. 读取 `ZK_ENABLED`
-2. 调用 `initialize_zk()`
-3. 启动在线节点相关逻辑
-
-现阶段真正接入主链路的是“ZK 初始化 + 心跳基础能力”。
-
-以下能力仍不能视为已经闭环：
-
-- `client path` 注册与 watch
-- 日志服务发现接入上传链路
-- 完整 Pradar 注册协同
-- Java Agent 级别的状态字段完全对齐
-
-## 3. 默认路径
-
-当前默认值已经调整为：
+当前默认在线节点路径：
 
 ```text
-status_base_path=/config/log/pradar/client
-client_base_path=/config/log/pradar/client
-server_base_path=/config/log/pradar/server
+/config/log/pradar/client/<appName>/<fullAgentId>
 ```
 
-说明：
+其中：
 
-- 这是为了让 Python 探针的在线节点默认更接近 Java Agent 的可见路径
-- 代码里 `get_status_path()` 与 `get_client_path()` 当前都会落到 `/config/log/pradar/client/...`
+- `<appName>` 来自 `APP_NAME` 或 `SIMULATOR_APP_NAME`
+- `<fullAgentId>` 格式为 `plainAgentId&envCode:userId:tenantAppKey`
 
-## 4. 关键环境变量
+示例：
 
-- `ZK_ENABLED`
-- `REGISTER_NAME`
-- `SIMULATOR_ZK_SERVERS`
-- `SIMULATOR_APP_NAME`
-- `SIMULATOR_AGENT_ID`
-- `SIMULATOR_ENV_CODE`
-- `SIMULATOR_TENANT_ID`
-- `SIMULATOR_USER_ID`
-- `SIMULATOR_TENANT_APP_KEY`
-- `SIMULATOR_AGENT_VERSION`
-- `SIMULATOR_VERSION`
-- `MANAGEMENT_URL`
+```text
+/config/log/pradar/client/demo-app/10.0.0.1-1000&fat:42:tenant-key
+```
 
-## 5. 心跳数据
+## 4. 字段规则
 
-`ZkConfig.to_heartbeat_data()` 当前会生成类似字段：
+当前 ZK payload 重点字段：
 
-- `address`
-- `host`
-- `name`
-- `pid`
 - `agentId`
 - `agentLanguage=PYTHON`
 - `agentVersion`
 - `simulatorVersion`
-- `agentStatus`
-- `errorCode`
-- `errorMsg`
-- `jvmArgs`
-- `jdkVersion`
-- `tenantAppKey`
+- `address`
+- `host`
+- `name`
+- `pid`
 - `envCode`
+- `tenantAppKey`
 - `userId`
-- `service`
-- `port`
+- `jdkVersion`
+- `jdk`
 
-这部分已经在向 Java Agent 对齐，但还没有经过真实控制台与 ZK 端到端验收。
+其中：
+
+- `name` 当前已改为应用名，而不是工作目录名
+- `jdk` 和 `jdkVersion` 当前都会写成 `Python x.y.z`
+
+## 5. 与 Java Agent 的关系
+
+当前已经对齐的关键点：
+
+- `plainAgentId` 和 `fullAgentId` 的拆分规则
+- `agentLanguage`
+- `envCode/userId/tenantAppKey`
+- `jdk/jdkVersion`
+
+当前还没完全对齐的部分：
+
+- client path / watch 的完整主流程集成
+- 日志服务发现与数据推送
+- 更完整的状态码、错误码和模块协同信息
 
 ## 6. 当前结论
 
-可以说：
+不能再说“Python 探针没有 ZK 实现”，因为基础设施和在线节点链路已经有了。
 
-- Python 侧已经不再是“完全没有 ZK”
-- 当前已具备基础 ZK 基础设施和在线节点能力
-
-不能说：
-
-- 已与 Java Agent 的 ZK 交互完全等价
-- 控制台、client path、日志发现、配置 watch 已全部闭环
+但也不能说“已经完全对齐 Java Agent”，因为当前主要是在线节点和基础字段收敛，完整的 client path/watch/log server 体系还没有闭环。

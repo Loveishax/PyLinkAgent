@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import logging
 
 from .zk_client import ZkClient, ConnectionState, ZkNodeStat
-from .config import ZkConfig, get_config
+from .config import ZkConfig, get_config, get_host_name, get_local_address
 
 logger = logging.getLogger(__name__)
 
@@ -617,17 +617,12 @@ class ZkClientPathRegister:
 
     def _init_client_data(self) -> None:
         """初始化客户端数据"""
-        import socket
         import datetime
 
         # 获取本机 IP
-        try:
-            self._client_data.address = socket.gethostbyname(socket.gethostname())
-        except Exception:
-            self._client_data.address = "127.0.0.1"
-
-        self._client_data.host = socket.gethostname()
-        self._client_data.name = os.path.basename(os.getcwd())
+        self._client_data.address = get_local_address()
+        self._client_data.host = get_host_name()
+        self._client_data.name = self.config.app_name
         self._client_data.pid = str(os.getpid())
         self._client_data.agent_id = self.config.get_full_agent_id()
         self._client_data.agent_language = "PYTHON"

@@ -12,7 +12,6 @@ HeartbeatReporter - PyLinkAgent 心跳上报
 
 import logging
 import time
-import socket
 import os
 import threading
 from typing import Optional, List, Dict, Any
@@ -20,6 +19,7 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 from .external_api import ExternalAPI, HeartRequest, CommandPacket
+from pylinkagent.zookeeper.config import get_local_address
 
 
 logger = logging.getLogger(__name__)
@@ -138,13 +138,13 @@ class HeartbeatReporter:
 
     def set_agent_error(self, error_info: str) -> None:
         """设置 Agent 错误信息"""
-        self._status.agent_status = "error"
-        self._status.agent_error_info = error_info
+        self._status.agent_status = "ERROR"
+        self._status.agent_error_info = [error_info]
         logger.warning(f"Agent 错误：{error_info}")
 
     def set_simulator_error(self, error_info: str) -> None:
         """设置 Simulator 错误信息"""
-        self._status.simulator_status = "error"
+        self._status.simulator_status = "ERROR"
         self._status.simulator_error_info = error_info
         logger.warning(f"Simulator 错误：{error_info}")
 
@@ -231,14 +231,7 @@ class HeartbeatReporter:
 
     def _get_local_ip(self) -> str:
         """获取本机 IP 地址"""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            return "127.0.0.1"
+        return get_local_address()
 
     def _build_dependency_info(self) -> str:
         """构建依赖信息字符串"""

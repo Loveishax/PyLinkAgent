@@ -1,34 +1,23 @@
 # PyLinkAgent 验证方案
 
-本文档只记录已经实际验证过的项目，以及当前建议的验证顺序。
+本文档只记录两类内容：
+
+- 已经在当前环境实际执行过的验证
+- 你后续放到内网环境时，建议按什么顺序验证
 
 ## 1. 已完成的本地验证
 
-### 1.1 编译检查
+### 1.1 语法与导入
 
-已对以下文件执行 `py_compile`，结果通过：
+已通过：
 
-- `pylinkagent/__init__.py`
-- `pylinkagent/bootstrap.py`
-- `pylinkagent/auto_bootstrap.py`
-- `pylinkagent/cli.py`
-- `pylinkagent/controller/external_api.py`
-- `pylinkagent/controller/config_fetcher.py`
-- `pylinkagent/controller/heartbeat.py`
-- `pylinkagent/controller/command_poller.py`
-- `pylinkagent/zookeeper/config.py`
-- `sitecustomize.py`
-
-### 1.2 导入检查
-
-以下导入已通过：
-
+- `py_compile`
 - `import pylinkagent`
 - `import pylinkagent.auto_bootstrap`
 - `import pylinkagent.cli`
 - `import sitecustomize`
 
-### 1.3 自动加载烟测
+### 1.2 自动加载烟测
 
 测试环境：
 
@@ -48,159 +37,235 @@ python -c "import pylinkagent; print(pylinkagent.is_running()); pylinkagent.shut
 已确认：
 
 - `import pylinkagent` 会自动尝试启动探针
-- 启动耗时约 `0.66s`
-- `shutdown()` 能干净停止后台线程
-- 不会被后台线程的初始 `sleep` 长时间卡住
+- `shutdown()` 能正常停掉后台线程
+- 本地无控制台服务时，启动不会被初始同步拉配置长时间卡住
 
-### 1.4 CLI 启动器
-
-已确认：
+### 1.3 CLI 注入验证
 
 ```bash
 pylinkagent-run python -c "import os; print(os.getenv('PYLINKAGENT_ENABLED'))"
 ```
 
-会输出：
+预期输出：
 
 ```text
 true
 ```
 
-## 2. 建议的验证顺序
+### 1.4 运行时配置同步测试
 
-### 2.1 本地静态挂载验证
+```bash
+pytest tests/test_runtime_config_sync.py -q
+```
+
+当前已通过，覆盖：
+
+- 压测总开关进入 `PradarSwitcher`
+- 白名单开关进入 `PradarSwitcher` 和 `WhitelistManager`
+- 远程调用白名单进入 `WhitelistManager`
+- 影子 DB/Redis/ES/Kafka 配置进入 `ShadowConfigCenter`
+
+### 1.5 控制台字段对齐测试
+
+```bash
+pytest tests/test_control_plane_alignment.py -q
+```
+
+当前已通过，覆盖：
+
+- 应用注册 payload 包含 `agentId`、`nodeKey`、`machineIp`、`hostName`、`pid`、`language`
+- HTTP 心跳使用 plain `agentId`
+- ZK 节点 payload 使用 full `agentId&envCode:userId:tenantAppKey`
+- ZK payload 同时包含 `jdkVersion` 和 `jdk`
+
+## 2. 内网联调建议顺序
+
+建议严格按下面顺序走，避免多条链路同时排错。
+
+### 2.1 静态挂载验证
 
 目标：
 
 - 包已安装
 - `sitecustomize` 生效
-- 进程能自动加载探针
+- 进程启动时自动加载探针
 
-建议命令：
+建议最小命令：
 
 ```bash
 python -c "import pylinkagent; print(pylinkagent.is_running())"
 ```
+
+观察点：
+
+- 进程日志里是否出现 `PyLinkAgent 启动中`
+- `is_running()` 是否输出 `True`
 
 ### 2.2 控制台 HTTP 对接验证
 
 目标：
 
 - `MANAGEMENT_URL` 可达
-- 应用注册能成功
-- 心跳请求能发出
+- 应用注册成功
+- 心跳请求正常发出
 
-建议命令：
+建议先设置：
 
 ```bash
-python scripts/quick_verify.py
+export PYLINKAGENT_ENABLED=true
+export MANAGEMENT_URL=http://<takin-web-host>:<port>
+export APP_NAME=<python-app-name>
+export AGENT_ID=<plain-agent-id>
+export USER_APP_KEY=<if-needed>
+export TENANT_APP_KEY=<if-needed>
+export USER_ID=<if-needed>
+export ENV_CODE=<if-needed>
 ```
 
-说明：
+建议观察：
 
-- 这个脚本更适合做“接口可达性检查”
-- 它不能证明完整配置消费链路已经闭环
+- 控制台应用列表中是否出现应用
+- 控制台探针安装信息中是否出现该实例
+- 最近一次心跳时间是否更新
+- 本地日志是否出现注册成功或心跳成功信息
 
-建议同时观察：
+重点核对字段：
 
-- 控制台应用列表
-- 控制台探针安装信息
-- 控制台最近一次心跳时间
-- Python 进程本地日志
+- `applicationName`
+- `agentId`
+- `nodeKey`
+- `machineIp`
+- `hostName`
+- `pid`
+- `agentVersion`
+- `pradarVersion`
 
-### 2.3 ZooKeeper 验证
+### 2.3 ZooKeeper 在线节点验证
 
 目标：
 
-- 能连上 ZK
-- 在线节点能创建
-- 心跳数据能写入
+- 能连接到 ZK
+- 在线节点创建成功
+- 节点数据字段符合预期
 
 建议先设置：
 
 ```bash
 export ZK_ENABLED=true
 export REGISTER_NAME=zookeeper
-export SIMULATOR_ZK_SERVERS=<zk_servers>
-export SIMULATOR_APP_NAME=my-python-app
+export SIMULATOR_ZK_SERVERS=<zk-hosts>
+export SIMULATOR_APP_NAME=<python-app-name>
+export SIMULATOR_AGENT_ID=<plain-agent-id>
+export SIMULATOR_ENV_CODE=<env-code>
+export SIMULATOR_USER_ID=<user-id>
+export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
 ```
 
-当前应优先做真实环境验证，不建议把 `docs/` 中旧的“全部通过”示例当成事实。
+重点核对节点路径：
 
-建议在 ZK 客户端里重点核对：
+```text
+/config/log/pradar/client/<appName>/<fullAgentId>
+```
 
-- 节点路径是否落在 `/config/log/pradar/client/<app>/<agentId>`
+其中：
+
+- `plainAgentId` 示例：`10.0.0.1-1000`
+- `fullAgentId` 示例：`10.0.0.1-1000&fat:42:tenant-key`
+
+重点核对节点数据字段：
+
+- `agentId`
+- `agentLanguage`
+- `agentVersion`
+- `simulatorVersion`
+- `address`
+- `host`
+- `name`
+- `pid`
+- `envCode`
+- `tenantAppKey`
+- `userId`
+- `jdkVersion`
+- `jdk`
+
+附加检查：
+
 - 节点是否为临时节点
-- 节点数据中的 `agentId`、`agentLanguage`、`agentVersion`、`envCode`、`tenantAppKey`
 - Python 进程退出后节点是否自动消失
 
-### 2.4 影子路由验证
+### 2.4 远程配置联动验证
 
 目标：
 
-- 影子库配置能进入 `ShadowConfigCenter`
-- 压测流量命中后发生路由切换
+- 控制台下发开关和影子配置后，Python 运行时状态发生变化
 
-可先运行：
+建议优先验证：
 
-```bash
-python scripts/verify_shadow_routing.py
-```
+1. 压测总开关
+2. 白名单开关
+3. 影子库配置
 
-说明：
+建议观察：
 
-- 该脚本主要验证配置解析和路由逻辑
-- 它不等价于真实控制台下发配置并驱动业务连接切换的端到端验证
+- 本地日志中是否出现 `Pradar 运行时配置已应用`
+- 本地日志中是否出现 `影子配置已更新`
+- 控制台侧配置变更后，下一次轮询是否生效
 
-建议端到端验证 MySQL 时明确分两组流量：
+### 2.5 MySQL 影子库隔离验证
 
-1. 普通流量
-   - 预期仍访问业务库
-2. 压测标记流量
-   - 预期切到影子库
+这是当前最关键的业务验证项。
 
-如果暂时没有现成压测标记规范，可以先在入口拦截层约定一个临时 header，例如：
+目标：
 
-```text
-X-PyLinkAgent-Cluster-Test: 1
-```
+- 普通流量仍访问业务库
+- 压测流量切换到影子库
 
-后续再按 Java Agent 和控制台的正式标记规则收敛。
+建议最小验证方法：
 
-## 3. 当前不应当作通过标准的项目
+1. 准备一组业务库和影子库，表结构一致
+2. 控制台下发影子库配置
+3. 发两组请求
 
-以下内容在代码里有脚本或骨架，但不能视为“已经完成验证”：
+普通流量：
 
-- client path/register/watch 全流程
-- 日志服务发现链路
-- 命令安装、升级、卸载真实执行
-- 全量控制台远程配置消费
-- Java Agent 等价的端到端数据隔离
+- 不带压测标记
+- 预期写入业务库
 
-## 4. 推荐的后续验收用例
+压测流量：
 
-第一批建议只盯最关键闭环：
+- 带压测标记
+- 当前可先用临时 header，例如 `X-PyLinkAgent-Cluster-Test: 1`
+- 预期写入影子库
 
-1. Python 应用启动后控制台出现应用/探针实例
-2. ZK 中出现对应在线临时节点
-3. 控制台下发压测开关、白名单开关后，运行时状态能跟着变化
-4. 控制台下发影子库配置后，`ConfigFetcher` 能拉到并进入 `ShadowConfigCenter`
-5. 带压测标记的 MySQL 流量切到影子库
-6. 非压测流量保持业务库不变
+建议记录：
 
-## 5. 内网环境建议记录的信息
+- 请求 header
+- 应用日志
+- SQL 实际落库结果
+- 控制台影子库配置截图
 
-为了方便远程排查，建议内网验证时把下面信息一并记录下来：
+## 3. 当前不能视为“已完成验证”的内容
+
+以下内容即使代码里有类或骨架，也不能算已经联调完成：
+
+- 真实命令安装、升级、卸载
+- ZK client path / watch / 日志服务发现完整链路
+- Java Agent 等价的全量插件生态
+- Mock / 黑名单 / forward 完整执行链路
+- 全量端到端压测数据隔离
+
+## 4. 建议你在内网环境保留的证据
+
+为了后续远程排查，建议至少保存这些信息：
 
 - Python 版本
-- 安装方式：`pip install -e .` 还是离线 wheel 安装
+- 安装方式：`pip install -e .` 还是离线 wheel
 - 启动方式：`sitecustomize` / `pylinkagent-run` / 显式导入
 - `MANAGEMENT_URL`
 - `APP_NAME`
 - `AGENT_ID`
 - `SIMULATOR_ZK_SERVERS`
-- 启动日志完整输出
+- 完整启动日志
 - 控制台页面截图
-- ZK 节点路径和节点数据截图
-
-这些信息足够支撑后续继续做字段对齐和控制台联调。
+- ZK 节点路径和节点内容截图
+- 影子库实际写入结果

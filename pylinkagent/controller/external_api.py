@@ -18,6 +18,8 @@ import time
 import os
 import json
 
+from pylinkagent.zookeeper.config import get_host_name, get_local_address
+
 try:
     import httpx
     HTTPX_AVAILABLE = True
@@ -563,13 +565,23 @@ class ExternalAPI:
         if app_info is None:
             app_info = {
                 "applicationName": self.app_name,
-                "applicationDesc": f"Application: {self.app_name}",
+                "applicationDesc": (
+                    f"PyLinkAgent app={self.app_name}, host={get_host_name()}, "
+                    f"ip={get_local_address()}, pid={os.getpid()}, agentId={self.agent_id}"
+                ),
                 "useYn": 0,
                 "accessStatus": 0,
                 "switchStatus": "OPENED",
                 "nodeNum": 1,
                 "agentVersion": self.agent_version if hasattr(self, 'agent_version') else "1.0.0",
                 "pradarVersion": self.simulator_version if hasattr(self, 'simulator_version') else "1.0.0",
+                "agentId": self.agent_id,
+                "nodeKey": self._build_node_key(),
+                "machineIp": get_local_address(),
+                "hostName": get_host_name(),
+                "pid": str(os.getpid()),
+                "language": "PYTHON",
+                "frameworkName": "PyLinkAgent",
             }
 
         try:
@@ -614,7 +626,7 @@ class ExternalAPI:
         url = "/api/application/agent/access/status"
 
         body = {
-            "nodeKey": os.getenv("NODE_KEY", "pylinkagent-" + str(os.getpid())),
+            "nodeKey": self._build_node_key(),
             "agentId": self.agent_id,
             "applicationName": self.app_name,
             "switchErrorMap": error_info,
@@ -786,7 +798,7 @@ class ExternalAPI:
         """获取请求头"""
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "PyLinkAgent/1.0.0",
+            "User-Agent": f"PyLinkAgent/{self.agent_version}",
         }
 
         if self.api_key:
@@ -851,6 +863,10 @@ class ExternalAPI:
         if default_type is None:
             return response
         return None
+
+    def _build_node_key(self) -> str:
+        """Build a stable node key shared by registration and status upload."""
+        return os.getenv("NODE_KEY", f"{self.app_name}:{self.agent_id}")
 
     def _request(
         self,

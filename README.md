@@ -1,37 +1,39 @@
 # PyLinkAgent
 
-PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是与 `Takin-web` 控制台和 ZooKeeper 保持可兼容的基础交互，并在压测流量进入后提供影子路由能力。
-
-当前代码已经完成第一轮 P0 收敛，重点是把探针从“骨架代码”收敛到“可安装、可自动加载、可启动、可停止”的状态。现阶段优先目标不是追平 Java LinkAgent 的全部模块生态，而是先完成以下闭环：
+PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是尽量复用 Java LinkAgent 与 `Takin-web`、ZooKeeper 的核心交互模型，并优先完成以下闭环：
 
 - Python 进程静态挂载
-- 控制台应用注册和 HTTP 心跳
+- 控制台应用注册与 HTTP 心跳
 - ZooKeeper 在线节点注册
-- 影子库配置拉取与运行时接线
-- MySQL/Redis/ES/Kafka/HTTP 的基础影子路由
+- 控制台远程配置拉取并进入运行时
+- 压测流量的数据隔离，优先覆盖 MySQL/Redis/ES/Kafka/HTTP
+
+当前项目不再以“补齐 Java 94 个模块”为第一目标，优先级已经收敛到“先做出可接入、可观测、可隔离”的 Python 版本。
 
 ## 当前状态
 
-已落地：
+已经落地：
 
-- `sitecustomize` 自动加载入口
+- `sitecustomize` 自动加载
 - `pylinkagent-run` 启动包装器
 - `bootstrap` 主链路收敛
-- `ExternalAPI` 基础控制台对接
+- `ExternalAPI` 控制台 HTTP 对接
 - `ConfigFetcher`、`HeartbeatReporter`、`CommandPoller` 后台线程
-- 压测总开关、白名单开关、远程调用白名单的运行时接线
-- `ZooKeeper` 心跳基础设施
-- `MySQL`、`SQLAlchemy`、`Redis`、`Elasticsearch`、`Kafka`、`HTTP` 拦截器骨架
+- 压测总开关、白名单开关、远程调用白名单进入运行时
+- ZooKeeper 心跳节点基础设施
+- MySQL、SQLAlchemy、Redis、Elasticsearch、Kafka、HTTP 影子路由拦截器骨架
+- 控制台关键字段对齐
+  - HTTP 心跳使用 plain `agentId`
+  - ZooKeeper 节点使用 full `agentId&envCode:userId:tenantAppKey`
+  - 应用注册 payload 补齐 `agentId`、`nodeKey`、`machineIp`、`hostName`、`pid`、`language`
 
-尚未闭环或仅部分实现：
+尚未闭环或只完成骨架：
 
-- 控制台远程配置的完整消费链路
-  - 已接通：压测开关、白名单开关、远程调用白名单基础消费
-  - 未闭环：Mock、forward、黑名单的完整策略执行
-- 命令安装、升级、卸载的真实执行
-- Java Agent 级别的模块生态
-- 日志服务发现、client path/watch 的完整 ZK 集成
-- `instrument_simulator` / `simulator_agent` 旧框架收敛
+- 远程命令安装、升级、卸载的真实执行
+- Mock、黑名单、forward 等远程策略的完整消费
+- Java Agent 级别的插件生态
+- ZK client path / watch / 日志服务发现的完整集成
+- 影子 Job 与更多中间件链路
 
 ## 目录
 
@@ -39,21 +41,21 @@ PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是与 `Takin-w
 
 ```text
 PyLinkAgent/
-├── pylinkagent/
-│   ├── auto_bootstrap.py
-│   ├── bootstrap.py
-│   ├── cli.py
-│   ├── controller/
-│   ├── pradar/
-│   ├── shadow/
-│   └── zookeeper/
-├── docs/
-├── scripts/
-├── sitecustomize.py
-└── pyproject.toml
+├─ pylinkagent/
+│  ├─ auto_bootstrap.py
+│  ├─ bootstrap.py
+│  ├─ cli.py
+│  ├─ controller/
+│  ├─ pradar/
+│  ├─ shadow/
+│  └─ zookeeper/
+├─ docs/
+├─ scripts/
+├─ sitecustomize.py
+└─ pyproject.toml
 ```
 
-`instrument_simulator/`、`simulator_agent/`、`instrument_modules/` 这条旧复刻线目前没有被收敛到可运行主链路中，不应作为当前接入方式。
+`instrument_simulator/`、`simulator_agent/`、`instrument_modules/` 这条旧复刻线目前不属于可运行主链路。
 
 ## 安装
 
@@ -63,29 +65,33 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-`pip install -e .` 会安装当前包，并把 `sitecustomize.py` 与 `pylinkagent-run` 一并暴露出来。
+`pip install -e .` 会同时安装：
+
+- `pylinkagent` 包
+- `sitecustomize.py`
+- `pylinkagent-run` 命令
 
 ## 启动方式
 
 ### 1. `sitecustomize` 自动加载
 
-这是最接近 Java `-javaagent` 的方式。安装包后，只要 Python 进程能导入当前环境中的 `sitecustomize`，并设置了 `PYLINKAGENT_ENABLED=true`，解释器启动时就会自动尝试拉起探针。
+最接近 Java `-javaagent` 的体验。
 
 ```bash
 export PYLINKAGENT_ENABLED=true
 export MANAGEMENT_URL=http://localhost:9999
 export APP_NAME=my-python-app
-export AGENT_ID=my-python-agent
+export AGENT_ID=10.0.0.1-1000
 python app.py
 ```
 
-### 2. `pylinkagent-run` 包装启动
+### 2. `pylinkagent-run`
 
 ```bash
 pylinkagent-run python app.py
 ```
 
-这个命令会自动注入 `PYLINKAGENT_ENABLED=true`，适合不想改业务启动命令的场景。
+这个命令会自动注入 `PYLINKAGENT_ENABLED=true`。
 
 ### 3. 显式导入
 
@@ -99,20 +105,18 @@ os.environ["APP_NAME"] = "my-python-app"
 import pylinkagent
 ```
 
-`pylinkagent.__init__` 会调用 `auto_bootstrap()`。如果只想手动控制，也可以直接调用 `pylinkagent.bootstrap()`。
-
 ## 关键环境变量
 
-控制台和主链路：
+控制台与启动：
 
-- `PYLINKAGENT_ENABLED`: 是否允许自动加载，`true/false`
-- `MANAGEMENT_URL`: 控制台地址，默认 `http://localhost:9999`
-- `APP_NAME`: 应用名，默认 `default-app`
-- `AGENT_ID`: 探针实例 ID，默认 `pylinkagent-<pid>`
-- `AUTO_REGISTER_APP`: 是否自动注册应用，默认 `true`
-- `HEARTBEAT_INTERVAL`: HTTP 心跳间隔秒数，默认 `60`
-- `CONFIG_FETCH_INTERVAL`: 配置拉取间隔秒数，默认 `60`
-- `COMMAND_POLL_INTERVAL`: 命令轮询间隔秒数，默认 `30`
+- `PYLINKAGENT_ENABLED`
+- `MANAGEMENT_URL`
+- `APP_NAME`
+- `AGENT_ID`
+- `AUTO_REGISTER_APP`
+- `HEARTBEAT_INTERVAL`
+- `CONFIG_FETCH_INTERVAL`
+- `COMMAND_POLL_INTERVAL`
 
 控制台请求头兼容字段：
 
@@ -124,8 +128,8 @@ import pylinkagent
 
 ZooKeeper：
 
-- `ZK_ENABLED`: 是否启用 ZK，默认 `true`
-- `REGISTER_NAME`: 默认 `zookeeper`
+- `ZK_ENABLED`
+- `REGISTER_NAME`
 - `SIMULATOR_ZK_SERVERS`
 - `SIMULATOR_APP_NAME`
 - `SIMULATOR_AGENT_ID`
@@ -136,48 +140,42 @@ ZooKeeper：
 
 影子路由：
 
-- `SHADOW_ROUTING`: 是否启用影子路由，默认 `true`
+- `SHADOW_ROUTING`
 
-## 已确认的本地修改
+## 控制台对齐规则
 
-这一轮已经写入本地文件的核心改动如下：
+当前 Python 探针按下面的规则与 Java Agent 保持关键一致：
 
-- `pyproject.toml`
-  - 新增 `pylinkagent-run`
-  - 打包范围改为 `pylinkagent*`
-  - 暴露 `sitecustomize.py`
-- `sitecustomize.py`
-  - 新增解释器启动自动加载钩子
-- `pylinkagent/auto_bootstrap.py`
-  - 新增环境变量驱动的自动启动逻辑
-- `pylinkagent/cli.py`
-  - 新增包装启动器
-- `pylinkagent/bootstrap.py`
-  - 调整启动顺序
-  - 保留实际 interceptor 实例并正确反注册
-  - 接入 `SQLAlchemy` 拦截器
-  - 启动和停止链路收敛
-- `pylinkagent/controller/config_fetcher.py`
-- `pylinkagent/controller/heartbeat.py`
-- `pylinkagent/controller/command_poller.py`
-  - 后台线程使用 `Event.wait()`，停止不再被初始睡眠卡住
-- `pylinkagent/controller/external_api.py`
-  - 补齐 `agent_version` / `simulator_version`
-- `pylinkagent/zookeeper/config.py`
-  - 在线节点默认路径调整为 `/config/log/pradar/client`
-  - 修复 Python 版本字段生成
+- HTTP 心跳中的 `agentId` 使用 plain ID，例如 `10.0.0.1-1000`
+- ZooKeeper 节点中的 `agentId` 使用 full ID，例如 `10.0.0.1-1000&fat:42:tenant-key`
+- 应用注册描述会带上 `app`、`host`、`ip`、`pid`、`agentId`
+- access status 上报中的 `nodeKey` 默认使用 `<appName>:<agentId>`
+- ZooKeeper payload 除了 `jdkVersion`，还会补 `jdk=Python x.y.z`
 
 ## 已完成验证
 
-已实际验证：
+本地已经实际跑过：
 
-- 关键文件 `py_compile` 通过
-- `import pylinkagent` 在 `PYLINKAGENT_ENABLED=true` 下会自动尝试拉起探针
-- `pylinkagent.shutdown()` 能正常关闭后台线程
-- `pylinkagent-run python -c ...` 会注入 `PYLINKAGENT_ENABLED=true`
-- 在本地无控制台服务时，自动加载启动耗时约 `0.66s`，不会因为同步拉配置而长时间卡住
+- `py_compile`
+- 自动加载烟测
+- `pylinkagent-run` 注入验证
+- 运行时配置同步测试
+- 控制台字段对齐测试
 
-详细验证步骤见 [docs/verification.md](docs/verification.md)。
+可直接执行：
+
+```bash
+pytest tests/test_runtime_config_sync.py -q
+pytest tests/test_control_plane_alignment.py -q
+```
+
+这两组测试当前覆盖：
+
+- 配置拉取后进入 `PradarSwitcher`、`WhitelistManager`、`ShadowConfigCenter`
+- 应用注册 payload 的关键字段
+- HTTP 心跳使用 plain `agentId`
+- ZooKeeper payload 使用 full `agentId`
+- ZK payload 中的 `jdk/jdkVersion`
 
 ## 文档索引
 
@@ -189,9 +187,9 @@ ZooKeeper：
 
 ## 当前建议
 
-如果目标是先做出“Python 版本的可接入 LinkAgent”，后续优先级建议是：
+下一阶段优先级：
 
-1. 对齐控制台注册、心跳、ZK 节点字段
-2. 把影子库、白名单、全局开关真正灌进运行时
-3. 先闭合 `HTTP 入口染色 -> MySQL 影子库切换`
-4. 再扩 Redis、Kafka、ES 的联动配置
+1. 继续对齐控制台注册、心跳、ZK 节点字段
+2. 先闭合 `HTTP 入口染色 -> MySQL 影子库切换`
+3. 再补 Redis、Kafka、ES 的联动配置与隔离
+4. 最后再做真实命令执行和更多插件扩展

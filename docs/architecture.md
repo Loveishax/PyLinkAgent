@@ -1,123 +1,130 @@
 # PyLinkAgent 当前架构
 
-本文档描述的是当前主链路，而不是历史规划。
+## 1. 主链路
 
-## 1. 当前生效的模块边界
-
-当前应该围绕 `pylinkagent/` 工作：
-
-- `bootstrap.py`: 启动与关闭总入口
-- `auto_bootstrap.py`: `PYLINKAGENT_ENABLED` 驱动的自动加载逻辑
-- `cli.py`: `pylinkagent-run` 包装启动器
-- `controller/`: 控制台 HTTP 对接、应用注册、后台线程
-- `zookeeper/`: ZK 客户端、心跳、client path/log server 基础类
-- `shadow/`: 影子配置中心、路由器、各类 interceptor
-- `pradar/`: 上下文、开关、白名单、trace 标记基础类
-
-## 2. 当前启动顺序
-
-`pylinkagent.bootstrap()` 的主链路如下：
-
-1. 初始化 `ExternalAPI`
-2. 应用自动注册
-3. 初始化 ZooKeeper
-4. 启动 `ConfigFetcher`
-5. 初始化影子路由并注册配置变更回调
-6. 启动 HTTP 心跳线程
-7. 启动命令轮询线程
-8. 注册关闭钩子
-
-这次收敛的关键调整是先启动 `ConfigFetcher`，再挂影子路由，避免影子配置回调注册时 `self._config_fetcher` 为空。
-
-## 3. 自动加载方式
-
-当前支持两条自动加载路径：
-
-### `sitecustomize`
-
-`sitecustomize.py` 会在解释器启动时自动执行，但只有在 `PYLINKAGENT_ENABLED=true` 时才会真正调用 `auto_bootstrap()`。
-
-### `pylinkagent-run`
-
-`pylinkagent-run` 会为目标进程注入 `PYLINKAGENT_ENABLED=true` 后再启动业务命令。
-
-## 4. 控制面
-
-当前 HTTP 控制面由 `pylinkagent/controller/external_api.py` 提供，主要覆盖：
-
-- `/api/agent/heartbeat`
-- `/api/agent/application/node/probe/operate`
-- `/api/agent/application/node/probe/operateResult`
-- `/api/application/center/app/info`
-- `/api/link/ds/configs/pull`
-- `/api/remote/call/configs/pull`
-- `/api/link/ds/server/configs/pull`
-- `/api/link/es/server/configs/pull`
-- `/api/shadow/job/queryByAppName`
-- `/api/agent/configs/shadow/consumer`
-- `/api/application/center/app/switch/agent`
-- `/api/global/switch/whitelist`
-
-现状说明：
-
-- 接口定义不等于闭环完成
-- 目前真正跑进运行时主链路的包括：
-  - 应用注册
-  - HTTP 心跳
-  - 命令拉取骨架
-  - 影子库/Redis/ES/Kafka 配置加载
-  - 压测总开关
-  - 白名单开关
-  - 远程调用白名单基础消费
-
-## 5. ZooKeeper
-
-当前 ZK 代码分为三层：
-
-- `zk_client.py`: kazoo 客户端封装
-- `zk_heartbeat.py`: 在线节点心跳
-- `zk_client_path.py` / `zk_log_server.py`: client path 和日志服务发现基础类
-
-当前集成状态：
-
-- 已接入主链路的是 ZK 初始化与心跳
-- `client path`、`watch`、`log server discovery` 仍未收敛为启动时默认闭环
-
-默认在线路径已改为更接近 Java Agent 的：
+当前可运行主链路全部收敛在 `pylinkagent/`：
 
 ```text
-/config/log/pradar/client/{app}/{agentId}
+pylinkagent/
+├─ auto_bootstrap.py
+├─ bootstrap.py
+├─ cli.py
+├─ controller/
+├─ pradar/
+├─ shadow/
+└─ zookeeper/
 ```
 
-## 6. 影子路由
+启动顺序：
 
-当前拦截器列表：
+1. 初始化 `ExternalAPI`
+2. 应用注册
+3. 初始化 ZooKeeper
+4. 启动 `ConfigFetcher`
+5. 把远程开关和白名单应用到运行时
+6. 初始化影子路由
+7. 启动 HTTP 心跳
+8. 启动命令轮询
 
-- `MySQLShadowInterceptor`
-- `SQLAlchemyShadowInterceptor`
-- `RedisShadowInterceptor`
-- `ESShadowInterceptor`
-- `KafkaShadowInterceptor`
-- `HTTPShadowInterceptor`
+## 2. 控制台链路
 
-当前影子路由的核心问题不是“完全没有”，而是：
+核心组件：
 
-- 控制台拉到的影子库、Redis、ES、Kafka 配置已经开始灌入配置中心
-- 但 Job、Mock、forward、更多中间件策略还没形成闭环
-- 染色入口、全局开关、白名单等链路仍未和 Java Agent 等价
+- `pylinkagent/controller/external_api.py`
+- `pylinkagent/controller/application_register.py`
+- `pylinkagent/controller/heartbeat.py`
+- `pylinkagent/controller/config_fetcher.py`
+- `pylinkagent/controller/command_poller.py`
 
-## 7. 旧框架的状态
+当前已经接通：
 
-以下目录目前不应被视为接入主线：
+- 应用注册
+- HTTP 心跳
+- 命令拉取和结果回传骨架
+- 影子库配置拉取
+- 压测开关
+- 白名单开关
+- 远程调用白名单
+- Redis / ES / Kafka / Shadow Job 配置拉取
+
+当前还没闭环：
+
+- 远程命令真实执行
+- Mock / 黑名单 / forward 的完整策略执行
+
+## 3. 标识规则
+
+这是当前和 Java Agent 对齐最关键的一组规则。
+
+### 3.1 HTTP 心跳
+
+HTTP 心跳中的 `agentId` 使用 plain ID：
+
+```text
+10.0.0.1-1000
+```
+
+### 3.2 ZooKeeper
+
+ZooKeeper 节点中的 `agentId` 使用 full ID：
+
+```text
+10.0.0.1-1000&fat:42:tenant-key
+```
+
+### 3.3 应用注册
+
+应用注册 payload 当前会补齐：
+
+- `applicationName`
+- `applicationDesc`
+- `agentId`
+- `nodeKey`
+- `machineIp`
+- `hostName`
+- `pid`
+- `language`
+- `frameworkName`
+- `agentVersion`
+- `pradarVersion`
+
+## 4. 运行时配置链路
+
+`ConfigFetcher` 会把远程配置灌入：
+
+- `PradarSwitcher`
+- `WhitelistManager`
+- `ShadowConfigCenter`
+
+当前已落地的运行时消费：
+
+- 压测总开关
+- 白名单开关
+- URL / RPC / MQ / Cache Key 白名单
+- 影子 DB
+- 影子 Redis
+- 影子 ES
+- 影子 Kafka
+
+## 5. 影子路由链路
+
+当前拦截器入口：
+
+- `mysql_interceptor.py`
+- `sqlalchemy_interceptor.py`
+- `redis_interceptor.py`
+- `es_interceptor.py`
+- `kafka_interceptor.py`
+- `http_interceptor.py`
+
+当前目标不是扩插件数量，而是先把这几条主链路做成可验证、可联调、可隔离。
+
+## 6. 旧架构状态
+
+下面这几条旧复刻线当前不属于主链路：
 
 - `instrument_simulator/`
 - `simulator_agent/`
 - `instrument_modules/`
 
-原因：
-
-- 依赖缺失
-- 导入链未闭合
-- 未接入当前 `bootstrap` 主流程
-
-后续如果继续做 Java Agent 等价能力，建议是在现有 `pylinkagent/` 主线上收敛，而不是继续扩旧框架分支。
+它们可以作为参考代码保留，但当前不要把它们当作“Python 版 Java simulator 已可运行”。

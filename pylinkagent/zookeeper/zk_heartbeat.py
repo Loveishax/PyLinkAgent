@@ -8,7 +8,6 @@ import json
 import threading
 import platform
 import time
-import socket
 import os
 from typing import Optional, Dict, Any, Callable, List
 from dataclasses import dataclass, field
@@ -16,7 +15,7 @@ from enum import Enum
 import logging
 
 from .zk_client import ZkClient, ConnectionState, ZkNodeStat
-from .config import ZkConfig, get_config
+from .config import ZkConfig, get_config, get_host_name, get_local_address
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +88,7 @@ class HeartbeatData:
             "errorMsg": self.error_msg,
             "jvmArgs": self.jvm_args,
             "jdkVersion": self.jdk_version,
+            "jdk": self.jdk_version,
             "jvmArgsCheck": self.jvm_args_check,
             "tenantAppKey": self.tenant_app_key,
             "envCode": self.env_code,
@@ -537,10 +537,9 @@ class ZkHeartbeatManager:
     def _get_heartbeat_data(self) -> bytes:
         """获取心跳数据"""
         # 从配置填充数据
-        self._heartbeat_data.address = socket.gethostbyname(
-            socket.gethostname()) if socket.gethostname() else "127.0.0.1"
-        self._heartbeat_data.host = socket.gethostname()
-        self._heartbeat_data.name = os.path.basename(os.getcwd())
+        self._heartbeat_data.address = get_local_address()
+        self._heartbeat_data.host = get_host_name()
+        self._heartbeat_data.name = self.config.app_name
         self._heartbeat_data.pid = str(os.getpid())
         self._heartbeat_data.agent_id = self.config.get_full_agent_id()
         self._heartbeat_data.agent_language = "PYTHON"
