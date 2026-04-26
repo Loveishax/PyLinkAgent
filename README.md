@@ -161,12 +161,14 @@ ZooKeeper：
 - `pylinkagent-run` 注入验证
 - 运行时配置同步测试
 - 控制台字段对齐测试
+- MySQL / SQLAlchemy 影子库切换测试
 
 可直接执行：
 
 ```bash
 pytest tests/test_runtime_config_sync.py -q
 pytest tests/test_control_plane_alignment.py -q
+pytest tests/test_shadow_mysql_routing.py -q
 ```
 
 这两组测试当前覆盖：
@@ -176,6 +178,7 @@ pytest tests/test_control_plane_alignment.py -q
 - HTTP 心跳使用 plain `agentId`
 - ZooKeeper payload 使用 full `agentId`
 - ZK payload 中的 `jdk/jdkVersion`
+- MySQL 和 SQLAlchemy 在压测流量下改写到影子库连接参数
 
 ## 文档索引
 

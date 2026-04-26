@@ -396,6 +396,10 @@ class ShadowConfigCenter:
         url = url.strip().lower()
         if url.startswith("jdbc:"):
             url = url[5:]
+        if url.startswith("mysql+pymysql://"):
+            url = "mysql://" + url[len("mysql+pymysql://"):]
+        if url.startswith("postgresql+psycopg2://"):
+            url = "postgresql://" + url[len("postgresql+psycopg2://"):]
         return url
 
     @staticmethod

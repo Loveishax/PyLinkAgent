@@ -78,6 +78,18 @@ pytest tests/test_control_plane_alignment.py -q
 - ZK 节点 payload 使用 full `agentId&envCode:userId:tenantAppKey`
 - ZK payload 同时包含 `jdkVersion` 和 `jdk`
 
+### 1.6 MySQL 影子库路由测试
+
+```bash
+pytest tests/test_shadow_mysql_routing.py -q
+```
+
+当前已通过，覆盖：
+
+- `ShadowRouter.route_mysql()` 在压测流量下返回影子库连接参数
+- `MySQLShadowInterceptor` 会把 `db/database` 一并改写到影子库
+- `SQLAlchemyShadowInterceptor` 会把 engine URL 改写到影子库
+
 ## 2. 内网联调建议顺序
 
 建议严格按下面顺序走，避免多条链路同时排错。
@@ -243,6 +255,12 @@ export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
 - 应用日志
 - SQL 实际落库结果
 - 控制台影子库配置截图
+
+如果先只想做代码级冒烟，可先在本地跑：
+
+```bash
+pytest tests/test_shadow_mysql_routing.py -q
+```
 
 ## 3. 当前不能视为“已完成验证”的内容
 

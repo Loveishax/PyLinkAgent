@@ -1,118 +1,116 @@
 """
-HTTP 客户端影子路由拦截器
-
-包装 requests 和 httpx，在压测流量时:
-- 注入 X-Pradar-Cluster-Test 标头以传递压测标记
+HTTP client shadow routing interceptor.
 """
 
 import logging
 
 try:
     import wrapt
+
     WRAPT_AVAILABLE = True
 except ImportError:
     WRAPT_AVAILABLE = False
 
+
 logger = logging.getLogger(__name__)
 
-# 压测标头
 CLUSTER_TEST_HEADER = "X-Pradar-Cluster-Test"
 CLUSTER_TEST_VALUE = "1"
 
 
 class HTTPShadowInterceptor:
-    """
-    HTTP 客户端影子路由拦截器
-
-    在压测流量请求中注入 Cluster-Test 标头，
-    使下游服务也能识别压测流量并路由到影子。
-    """
+    """Inject pressure headers into outbound HTTP traffic."""
 
     def __init__(self, router):
-        """
-        Args:
-            router: ShadowRouter 实例
-        """
         self.router = router
         self._patched = False
+        self._original_requests_request = None
+        self._original_httpx_send = None
+        self._original_httpx_async_send = None
 
     def patch(self) -> bool:
-        """启用 HTTP 拦截"""
         if self._patched:
             return True
         if not WRAPT_AVAILABLE:
-            logger.warning("wrapt 不可用，无法启用 HTTP 拦截")
+            logger.warning("wrapt unavailable, skip HTTP shadow interceptor")
             return False
 
         success = False
-
-        # 拦截 requests
         try:
             self._patch_requests()
             success = True
-        except Exception as e:
-            logger.debug(f"拦截 requests 失败: {e}")
+        except Exception as exc:
+            logger.debug("Patch requests failed: %s", exc)
 
-        # 拦截 httpx
         try:
             self._patch_httpx()
             success = True
-        except Exception as e:
-            logger.debug(f"拦截 httpx 失败: {e}")
+        except Exception as exc:
+            logger.debug("Patch httpx failed: %s", exc)
 
         if success:
             self._patched = True
-            logger.info("HTTP 影子拦截已启用")
-
+            logger.info("HTTP shadow interceptor enabled")
         return success
 
     def unpatch(self) -> None:
-        """恢复 HTTP 客户端"""
-        if self._patched:
-            self._patched = False
-            logger.info("HTTP 影子拦截已恢复")
+        if not self._patched:
+            return
+
+        try:
+            if self._original_requests_request:
+                import requests
+
+                requests.Session.request = self._original_requests_request
+            if self._original_httpx_send or self._original_httpx_async_send:
+                import httpx
+
+                if self._original_httpx_send:
+                    httpx.Client.send = self._original_httpx_send
+                if self._original_httpx_async_send:
+                    httpx.AsyncClient.send = self._original_httpx_async_send
+        except Exception as exc:
+            logger.debug("Restore HTTP shadow interceptor failed: %s", exc)
+
+        self._patched = False
+        logger.info("HTTP shadow interceptor disabled")
 
     def _patch_requests(self) -> None:
-        """包装 requests 库"""
         import functools
         import requests
 
-        original_request = requests.Session.request
+        self._original_requests_request = requests.Session.request
 
-        @functools.wraps(original_request)
-        def wrapped_request(self_obj, method, url, *args, **kwargs):
-            headers = kwargs.get('headers', {})
-            if self._router.should_route():
+        @functools.wraps(self._original_requests_request)
+        def wrapped_request(session, method, url, *args, **kwargs):
+            headers = dict(kwargs.get("headers") or {})
+            if self.router.should_route():
                 headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
-                kwargs['headers'] = headers
-                logger.debug(f"requests 注入压测标头: {url}")
-            return original_request(self_obj, method, url, *args, **kwargs)
+                kwargs["headers"] = headers
+                logger.debug("Injected pressure header into requests: %s", url)
+            return self._original_requests_request(session, method, url, *args, **kwargs)
 
         requests.Session.request = wrapped_request
 
     def _patch_httpx(self) -> None:
-        """包装 httpx 库"""
         import functools
         import httpx
 
-        original_send = httpx.Client.send
+        self._original_httpx_send = httpx.Client.send
+        self._original_httpx_async_send = httpx.AsyncClient.send
 
-        @functools.wraps(original_send)
-        def wrapped_send(self_obj, request, *args, **kwargs):
-            if self._router.should_route():
+        @functools.wraps(self._original_httpx_send)
+        def wrapped_send(client, request, *args, **kwargs):
+            if self.router.should_route():
                 request.headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
-                logger.debug(f"httpx 注入压测标头: {request.url}")
-            return original_send(self_obj, request, *args, **kwargs)
+                logger.debug("Injected pressure header into httpx: %s", request.url)
+            return self._original_httpx_send(client, request, *args, **kwargs)
+
+        @functools.wraps(self._original_httpx_async_send)
+        async def wrapped_async_send(client, request, *args, **kwargs):
+            if self.router.should_route():
+                request.headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
+            return await self._original_httpx_async_send(client, request, *args, **kwargs)
 
         httpx.Client.send = wrapped_send
-
-        # 也包装异步客户端
-        original_async_send = httpx.AsyncClient.send
-
-        @functools.wraps(original_async_send)
-        async def wrapped_async_send(self_obj, request, *args, **kwargs):
-            if self._router.should_route():
-                request.headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
-            return await original_async_send(self_obj, request, *args, **kwargs)
-
         httpx.AsyncClient.send = wrapped_async_send
