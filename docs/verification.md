@@ -90,6 +90,18 @@ pytest tests/test_shadow_mysql_routing.py -q
 - `MySQLShadowInterceptor` 会把 `db/database` 一并改写到影子库
 - `SQLAlchemyShadowInterceptor` 会把 engine URL 改写到影子库
 
+### 1.7 HTTP 入口染色测试
+
+```bash
+pytest tests/test_http_ingress_tracing.py -q
+```
+
+当前已通过，覆盖：
+
+- 能识别 `X-Pradar-Cluster-Test`、`Pradar-Cluster-Test`、`p-pradar-cluster-test`、`X-PyLinkAgent-Cluster-Test`
+- WSGI 入口在请求生命周期内创建并保持 `Pradar` 上下文
+- ASGI 入口在请求生命周期内创建并清理 `Pradar` 上下文
+
 ## 2. 内网联调建议顺序
 
 建议严格按下面顺序走，避免多条链路同时排错。
@@ -205,7 +217,28 @@ export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
 - 节点是否为临时节点
 - Python 进程退出后节点是否自动消失
 
-### 2.4 远程配置联动验证
+### 2.4 HTTP 入口染色验证
+
+目标：
+
+- 请求进入 Python 应用后能建立 `Pradar` 上下文
+- 压测 header 能被识别
+
+建议优先在 Flask 或 FastAPI Demo 上验证。
+
+建议压测 header：
+
+```text
+X-Pradar-Cluster-Test: 1
+```
+
+建议观察：
+
+- 请求进入后日志中是否出现后续影子路由行为
+- 普通请求和压测请求的数据库落点是否不同
+- 业务侧若能临时打印 `Pradar.is_cluster_test()`，普通请求应为 `False`，压测请求应为 `True`
+
+### 2.5 远程配置联动验证
 
 目标：
 
@@ -223,7 +256,7 @@ export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
 - 本地日志中是否出现 `影子配置已更新`
 - 控制台侧配置变更后，下一次轮询是否生效
 
-### 2.5 MySQL 影子库隔离验证
+### 2.6 MySQL 影子库隔离验证
 
 这是当前最关键的业务验证项。
 
@@ -246,7 +279,7 @@ export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
 压测流量：
 
 - 带压测标记
-- 当前可先用临时 header，例如 `X-PyLinkAgent-Cluster-Test: 1`
+- 建议先用 `X-Pradar-Cluster-Test: 1`
 - 预期写入影子库
 
 建议记录：
@@ -260,6 +293,7 @@ export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
 
 ```bash
 pytest tests/test_shadow_mysql_routing.py -q
+pytest tests/test_http_ingress_tracing.py -q
 ```
 
 ## 3. 当前不能视为“已完成验证”的内容

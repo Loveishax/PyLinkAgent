@@ -6,6 +6,7 @@ PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是尽量复用
 - 控制台应用注册与 HTTP 心跳
 - ZooKeeper 在线节点注册
 - 控制台远程配置拉取并进入运行时
+- HTTP 入口染色
 - 压测流量的数据隔离，优先覆盖 MySQL/Redis/ES/Kafka/HTTP
 
 当前项目不再以“补齐 Java 94 个模块”为第一目标，优先级已经收敛到“先做出可接入、可观测、可隔离”的 Python 版本。
@@ -17,6 +18,7 @@ PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是尽量复用
 - `sitecustomize` 自动加载
 - `pylinkagent-run` 启动包装器
 - `bootstrap` 主链路收敛
+- Flask / FastAPI HTTP 入口染色
 - `ExternalAPI` 控制台 HTTP 对接
 - `ConfigFetcher`、`HeartbeatReporter`、`CommandPoller` 后台线程
 - 压测总开关、白名单开关、远程调用白名单进入运行时
@@ -34,6 +36,7 @@ PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是尽量复用
 - Java Agent 级别的插件生态
 - ZK client path / watch / 日志服务发现的完整集成
 - 影子 Job 与更多中间件链路
+- HTTP 入口染色到真实业务框架联调的内网验证
 
 ## 目录
 
@@ -48,14 +51,15 @@ PyLinkAgent/
 │  ├─ controller/
 │  ├─ pradar/
 │  ├─ shadow/
-│  └─ zookeeper/
+│  ├─ zookeeper/
+│  └─ http_server_interceptor.py
 ├─ docs/
 ├─ scripts/
 ├─ sitecustomize.py
 └─ pyproject.toml
 ```
 
-`instrument_simulator/`、`simulator_agent/`、`instrument_modules/` 这条旧复刻线目前不属于可运行主链路。
+`instrument_simulator/`、`simulator_agent/`、`instrument_modules/` 这条旧复刻线当前不属于可运行主链路。
 
 ## 安装
 
@@ -64,12 +68,6 @@ cd PyLinkAgent
 pip install -r requirements.txt
 pip install -e .
 ```
-
-`pip install -e .` 会同时安装：
-
-- `pylinkagent` 包
-- `sitecustomize.py`
-- `pylinkagent-run` 命令
 
 ## 启动方式
 
@@ -90,8 +88,6 @@ python app.py
 ```bash
 pylinkagent-run python app.py
 ```
-
-这个命令会自动注入 `PYLINKAGENT_ENABLED=true`。
 
 ### 3. 显式导入
 
@@ -142,15 +138,24 @@ ZooKeeper：
 
 - `SHADOW_ROUTING`
 
-## 控制台对齐规则
+入口染色：
 
-当前 Python 探针按下面的规则与 Java Agent 保持关键一致：
+- `HTTP_SERVER_TRACING`
+
+## 控制台与入口对齐规则
+
+当前 Python 探针按下面规则与 Java Agent 保持关键一致：
 
 - HTTP 心跳中的 `agentId` 使用 plain ID，例如 `10.0.0.1-1000`
 - ZooKeeper 节点中的 `agentId` 使用 full ID，例如 `10.0.0.1-1000&fat:42:tenant-key`
 - 应用注册描述会带上 `app`、`host`、`ip`、`pid`、`agentId`
 - access status 上报中的 `nodeKey` 默认使用 `<appName>:<agentId>`
 - ZooKeeper payload 除了 `jdkVersion`，还会补 `jdk=Python x.y.z`
+- HTTP 入口当前支持识别这些压测标记：
+  - `X-Pradar-Cluster-Test: 1`
+  - `Pradar-Cluster-Test: 1`
+  - `p-pradar-cluster-test: 1`
+  - `X-PyLinkAgent-Cluster-Test: 1`
 
 ## 已完成验证
 
@@ -162,6 +167,7 @@ ZooKeeper：
 - 运行时配置同步测试
 - 控制台字段对齐测试
 - MySQL / SQLAlchemy 影子库切换测试
+- HTTP 入口染色测试
 
 可直接执行：
 
@@ -169,9 +175,10 @@ ZooKeeper：
 pytest tests/test_runtime_config_sync.py -q
 pytest tests/test_control_plane_alignment.py -q
 pytest tests/test_shadow_mysql_routing.py -q
+pytest tests/test_http_ingress_tracing.py -q
 ```
 
-这两组测试当前覆盖：
+当前覆盖：
 
 - 配置拉取后进入 `PradarSwitcher`、`WhitelistManager`、`ShadowConfigCenter`
 - 应用注册 payload 的关键字段
@@ -179,6 +186,7 @@ pytest tests/test_shadow_mysql_routing.py -q
 - ZooKeeper payload 使用 full `agentId`
 - ZK payload 中的 `jdk/jdkVersion`
 - MySQL 和 SQLAlchemy 在压测流量下改写到影子库连接参数
+- WSGI / ASGI 入口能建立和清理 `Pradar` 上下文，并识别压测 header
 
 ## 文档索引
 
@@ -193,6 +201,6 @@ pytest tests/test_shadow_mysql_routing.py -q
 下一阶段优先级：
 
 1. 继续对齐控制台注册、心跳、ZK 节点字段
-2. 先闭合 `HTTP 入口染色 -> MySQL 影子库切换`
+2. 继续把 `HTTP 入口染色 -> MySQL 影子库切换` 做到真实框架联调
 3. 再补 Redis、Kafka、ES 的联动配置与隔离
 4. 最后再做真实命令执行和更多插件扩展

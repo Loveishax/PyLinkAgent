@@ -12,7 +12,8 @@ pylinkagent/
 ├─ controller/
 ├─ pradar/
 ├─ shadow/
-└─ zookeeper/
+├─ zookeeper/
+└─ http_server_interceptor.py
 ```
 
 启动顺序：
@@ -22,9 +23,10 @@ pylinkagent/
 3. 初始化 ZooKeeper
 4. 启动 `ConfigFetcher`
 5. 把远程开关和白名单应用到运行时
-6. 初始化影子路由
-7. 启动 HTTP 心跳
-8. 启动命令轮询
+6. 初始化 HTTP 入口染色
+7. 初始化影子路由
+8. 启动 HTTP 心跳
+9. 启动命令轮询
 
 ## 2. 控制台链路
 
@@ -53,8 +55,6 @@ pylinkagent/
 - Mock / 黑名单 / forward 的完整策略执行
 
 ## 3. 标识规则
-
-这是当前和 Java Agent 对齐最关键的一组规则。
 
 ### 3.1 HTTP 心跳
 
@@ -88,7 +88,28 @@ ZooKeeper 节点中的 `agentId` 使用 full ID：
 - `agentVersion`
 - `pradarVersion`
 
-## 4. 运行时配置链路
+## 4. HTTP 入口染色链路
+
+入口染色代码：
+
+- `pylinkagent/http_server_interceptor.py`
+
+当前行为：
+
+- 启动时会尝试给 Flask 和 FastAPI 注册入口包装
+- Flask 走 WSGI 包装
+- FastAPI 走 ASGI 包装
+- 请求进入时创建 `Pradar` 上下文
+- 请求结束时清理 `Pradar` 上下文
+- 支持从以下 header 识别压测流量：
+  - `X-Pradar-Cluster-Test`
+  - `Pradar-Cluster-Test`
+  - `p-pradar-cluster-test`
+  - `X-PyLinkAgent-Cluster-Test`
+
+这条链路是当前把“控制台压测开关”和“MySQL 影子库切换”连起来的关键前提。
+
+## 5. 运行时配置链路
 
 `ConfigFetcher` 会把远程配置灌入：
 
@@ -106,7 +127,7 @@ ZooKeeper 节点中的 `agentId` 使用 full ID：
 - 影子 ES
 - 影子 Kafka
 
-## 5. 影子路由链路
+## 6. 影子路由链路
 
 当前拦截器入口：
 
@@ -117,9 +138,13 @@ ZooKeeper 节点中的 `agentId` 使用 full ID：
 - `kafka_interceptor.py`
 - `http_interceptor.py`
 
-当前目标不是扩插件数量，而是先把这几条主链路做成可验证、可联调、可隔离。
+当前已经完成的关键修复：
 
-## 6. 旧架构状态
+- MySQL 压测流量下会同时改写 `db` 和 `database`
+- SQLAlchemy URL 归一化已与 JDBC URL 对齐
+- HTTP 客户端压测头注入支持反注册
+
+## 7. 旧架构状态
 
 下面这几条旧复刻线当前不属于主链路：
 
