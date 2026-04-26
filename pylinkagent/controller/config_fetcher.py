@@ -68,6 +68,7 @@ class ConfigFetcher:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._executor: Optional[ThreadPoolExecutor] = None
+        self._stop_event = threading.Event()
 
         # 配置变更回调
         self._config_change_callbacks: List[Callable[[str, Any, Any], None]] = []
@@ -87,6 +88,7 @@ class ConfigFetcher:
             logger.warning("ExternalAPI 未初始化，无法启动配置拉取")
             return False
 
+        self._stop_event.clear()
         self._running = True
         self._executor = ThreadPoolExecutor(
             max_workers=1,
@@ -100,6 +102,7 @@ class ConfigFetcher:
     def stop(self) -> None:
         """停止配置拉取"""
         self._running = False
+        self._stop_event.set()
 
         if self._executor:
             self._executor.shutdown(wait=False)
@@ -254,7 +257,9 @@ class ConfigFetcher:
         logger.info("配置拉取线程启动")
 
         # 初始延迟
-        time.sleep(self.initial_delay)
+        if self._stop_event.wait(self.initial_delay):
+            logger.info("配置拉取线程退出")
+            return
 
         while self._running:
             try:
@@ -262,11 +267,8 @@ class ConfigFetcher:
             except Exception as e:
                 logger.error(f"配置拉取循环异常：{e}")
 
-            # 等待下一次拉取
-            for _ in range(self.interval * 10):
-                if not self._running:
-                    break
-                time.sleep(0.1)
+            if self._stop_event.wait(self.interval):
+                break
 
         logger.info("配置拉取线程退出")
 

@@ -188,6 +188,7 @@ class CommandPoller:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._task_executor: Optional[ThreadPoolExecutor] = None
+        self._stop_event = threading.Event()
 
         # 命令结果回调
         self._on_command_result: Optional[Callable[[int, bool, str], None]] = None
@@ -210,6 +211,7 @@ class CommandPoller:
             logger.warning("ExternalAPI 未初始化，无法启动命令轮询")
             return False
 
+        self._stop_event.clear()
         self._running = True
         self._task_executor = ThreadPoolExecutor(
             max_workers=2,
@@ -223,6 +225,7 @@ class CommandPoller:
     def stop(self) -> None:
         """停止命令轮询"""
         self._running = False
+        self._stop_event.set()
 
         if self._task_executor:
             self._task_executor.shutdown(wait=False)
@@ -290,7 +293,9 @@ class CommandPoller:
         logger.info("命令轮询线程启动")
 
         # 首次轮询延迟 15 秒，给系统启动留出时间
-        time.sleep(15)
+        if self._stop_event.wait(15):
+            logger.info("命令轮询线程退出")
+            return
 
         while self._running:
             try:
@@ -304,11 +309,8 @@ class CommandPoller:
             except Exception as e:
                 logger.error(f"命令轮询异常：{e}")
 
-            # 等待下一次轮询
-            for _ in range(self.interval * 10):
-                if not self._running:
-                    break
-                time.sleep(0.1)
+            if self._stop_event.wait(self.interval):
+                break
 
         logger.info("命令轮询线程退出")
 

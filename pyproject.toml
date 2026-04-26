@@ -36,6 +36,9 @@ dependencies = [
     "packaging>=23.0",
 ]
 
+[project.scripts]
+pylinkagent-run = "pylinkagent.cli:main"
+
 [project.optional-dependencies]
 redis = ["redis>=4.5.0"]
 kafka = ["kafka-python>=2.0.0"]
@@ -53,7 +56,10 @@ Repository = "https://github.com/your-org/PyLinkAgent"
 Issues = "https://github.com/your-org/PyLinkAgent/issues"
 
 [tool.setuptools]
-packages = ["pylinkagent", "simulator_agent", "instrument_simulator", "instrument_modules"]
+py-modules = ["sitecustomize"]
+
+[tool.setuptools.packages.find]
+include = ["pylinkagent*"]
 
 [tool.setuptools_scm]
 write_to = "pylinkagent/_version.py"

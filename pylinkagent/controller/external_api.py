@@ -191,6 +191,8 @@ class ExternalAPI:
         self.api_key = api_key or ""
         self.timeout = timeout
         self.extra_headers = extra_headers or {}
+        self.agent_version = os.getenv("AGENT_VERSION", "1.0.0")
+        self.simulator_version = os.getenv("SIMULATOR_VERSION", self.agent_version)
 
         self._client: Optional[Any] = None
         self._initialized = False

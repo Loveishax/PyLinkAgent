@@ -77,6 +77,7 @@ class HeartbeatReporter:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._executor: Optional[ThreadPoolExecutor] = None
+        self._stop_event = threading.Event()
 
     def start(self) -> bool:
         """
@@ -93,6 +94,7 @@ class HeartbeatReporter:
             logger.warning("ExternalAPI 未初始化，无法启动心跳上报")
             return False
 
+        self._stop_event.clear()
         self._running = True
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="heartbeat")
         self._thread = self._executor.submit(self._heartbeat_loop)
@@ -103,6 +105,7 @@ class HeartbeatReporter:
     def stop(self) -> None:
         """停止心跳上报"""
         self._running = False
+        self._stop_event.set()
 
         if self._executor:
             self._executor.shutdown(wait=False)
@@ -245,7 +248,9 @@ class HeartbeatReporter:
         logger.info("心跳循环线程启动")
 
         # 首次心跳延迟 10 秒，给系统启动留出时间
-        time.sleep(10)
+        if self._stop_event.wait(10):
+            logger.info("心跳循环线程退出")
+            return
 
         while self._running:
             try:
@@ -261,11 +266,8 @@ class HeartbeatReporter:
             except Exception as e:
                 logger.error(f"心跳循环异常：{e}")
 
-            # 等待下一次心跳
-            for _ in range(self.interval * 10):
-                if not self._running:
-                    break
-                time.sleep(0.1)
+            if self._stop_event.wait(self.interval):
+                break
 
         logger.info("心跳循环线程退出")
 

@@ -1,113 +1,231 @@
 # PyLinkAgent QuickStart
 
-## 快速开始
+本文档只描述当前代码已经具备的接入方式，不再覆盖旧版 `instrument_simulator` 方案。
 
-### 方式一：代码导入（推荐）
+## 1. 安装
 
-在应用入口导入 pylinkagent 并调用 `bootstrap()`：
+```bash
+cd PyLinkAgent
+pip install -r requirements.txt
+pip install -e .
+```
+
+如果内网环境不能直接访问外网依赖源，建议先在可联网环境准备 wheel 包，再带入内网安装。
+
+可联网环境打包示例：
+
+```bash
+cd PyLinkAgent
+mkdir -p vendor
+pip download -r requirements.txt -d vendor
+```
+
+把 `PyLinkAgent/` 目录和 `vendor/` 一并带到内网后安装：
+
+```bash
+cd PyLinkAgent
+pip install --no-index --find-links=vendor -r requirements.txt
+pip install -e .
+```
+
+## 2. 最小环境变量
+
+```bash
+export PYLINKAGENT_ENABLED=true
+export MANAGEMENT_URL=http://localhost:9999
+export APP_NAME=my-python-app
+export AGENT_ID=my-python-agent
+```
+
+如果暂时不接 ZooKeeper 或不想自动注册应用，可以先显式关闭：
+
+```bash
+export ZK_ENABLED=false
+export AUTO_REGISTER_APP=false
+export SHADOW_ROUTING=false
+```
+
+## 3. 启动方式
+
+### 方式一：解释器自动加载
+
+```bash
+python app.py
+```
+
+前提：
+
+- 已 `pip install -e .`
+- `PYLINKAGENT_ENABLED=true`
+
+建议先用一个最小脚本确认自动加载生效：
+
+```python
+# app.py
+import time
+
+print("app started")
+time.sleep(30)
+print("app finished")
+```
+
+然后执行：
+
+```bash
+python app.py
+```
+
+### 方式二：包装启动
+
+```bash
+pylinkagent-run python app.py
+```
+
+### 方式三：显式导入
 
 ```python
 import os
-os.environ['MANAGEMENT_URL'] = 'http://localhost:9999'
-os.environ['APP_NAME'] = 'my-app'
-os.environ['AGENT_ID'] = 'agent-001'
+
+os.environ["PYLINKAGENT_ENABLED"] = "true"
+os.environ["MANAGEMENT_URL"] = "http://localhost:9999"
+os.environ["APP_NAME"] = "my-python-app"
 
 import pylinkagent
-pylinkagent.bootstrap()
-
-# 你的应用代码
-from fastapi import FastAPI
-app = FastAPI()
-
-@app.get("/")
-def read_root():
-    return {"hello": "world"}
 ```
 
-### 方式二：环境变量 + 命令行启动
+如果业务入口比较复杂，显式导入方式最容易先排除环境问题。确认链路打通后，再切回 `sitecustomize` 或 `pylinkagent-run`。
+
+## 4. 最小烟测
+
+下面这条命令用于验证当前安装环境能否自动加载、启动并关闭：
 
 ```bash
-export MANAGEMENT_URL=http://localhost:9999
-export APP_NAME=my-app
-export AGENT_ID=agent-001
-
-python -c "import pylinkagent; pylinkagent.bootstrap()" &
-# 或直接 import pylinkagent 后再启动应用
-python your_app.py
+python -c "import pylinkagent; print(pylinkagent.is_running()); pylinkagent.shutdown(); print(pylinkagent.is_running())"
 ```
 
-### 方式三：作为库单独使用
+预期：
 
-不需要完整 bootstrap，可以单独使用各个组件：
+- 第一行输出 `True`
+- 第二行输出 `False`
 
-```python
-from pylinkagent.controller.external_api import ExternalAPI, HeartRequest
-from pylinkagent.controller.config_fetcher import ConfigFetcher
-
-api = ExternalAPI(
-    tro_web_url="http://localhost:9999",
-    app_name="my-app",
-    agent_id="agent-001",
-)
-api.initialize()
-
-# 发送心跳
-req = HeartRequest(project_name="my-app", agent_id="agent-001",
-                   ip_address="192.168.1.100", progress_id=str(os.getpid()))
-api.send_heartbeat(req)
-
-# 拉取配置
-configs = api.fetch_shadow_database_config()
-print(f"获取到 {len(configs)} 个影子库配置")
-```
-
-## 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `MANAGEMENT_URL` | Takin-web 地址 | `http://localhost:9999` |
-| `APP_NAME` | 应用名称 | `default-app` |
-| `AGENT_ID` | Agent ID | `pylinkagent-<pid>` |
-| `USER_APP_KEY` | 用户 AppKey | 空 |
-| `TENANT_APP_KEY` | 租户 AppKey | 空 |
-| `USER_ID` | 用户 ID | 空 |
-| `ENV_CODE` | 环境代码 | `test` |
-| `SHADOW_ROUTING` | 启用影子路由 | `true` |
-| `CONFIG_FETCH_INTERVAL` | 配置拉取间隔(秒) | `60` |
-| `HEARTBEAT_INTERVAL` | 心跳间隔(秒) | `60` |
-| `COMMAND_POLL_INTERVAL` | 命令轮询间隔(秒) | `30` |
-| `AUTO_REGISTER_APP` | 自动注册应用 | `true` |
-
-## 验证
+如果你不希望探针去连控制台和 ZK，可以在验证前先设置：
 
 ```bash
-# 验证影子路由
-python scripts/verify_shadow_routing.py
-
-# 综合验证（需要 ZK + 控制台）
-python scripts/comprehensive_verification.py
+export ZK_ENABLED=false
+export AUTO_REGISTER_APP=false
+export SHADOW_ROUTING=false
 ```
 
-## 故障排查
+Windows PowerShell 写法：
 
-### 连接被拒绝
+```powershell
+$env:PYLINKAGENT_ENABLED="true"
+$env:ZK_ENABLED="false"
+$env:AUTO_REGISTER_APP="false"
+$env:SHADOW_ROUTING="false"
+python -c "import pylinkagent; print(pylinkagent.is_running()); pylinkagent.shutdown(); print(pylinkagent.is_running())"
+```
+
+## 5. 内网环境推荐验证顺序
+
+### 第一步：只验静态挂载
+
+先不要连控制台，也不要连 ZK，只验证探针是否能自动启动和停止。
+
+Linux/macOS：
 
 ```bash
-# 检查控制台是否可访问
-curl http://localhost:9999
+export PYLINKAGENT_ENABLED=true
+export ZK_ENABLED=false
+export AUTO_REGISTER_APP=false
+export SHADOW_ROUTING=false
+python -c "import pylinkagent; print(pylinkagent.is_running()); pylinkagent.shutdown(); print(pylinkagent.is_running())"
 ```
 
-### 配置拉取返回空
+预期：
 
-- 确认应用在控制台已注册
-- 确认已配置影子库数据源
+- 输出 `True`
+- 输出 `False`
 
-### 影子路由未生效
+### 第二步：只验控制台 HTTP
 
-- 检查 `SHADOW_ROUTING` 环境变量是否为 `true`
-- 确认压测流量已染色（`PradarSwitcher` + `Pradar.is_cluster_test()`）
+先打开控制台地址，暂时仍然关闭 ZK 和影子路由：
 
----
+```bash
+export PYLINKAGENT_ENABLED=true
+export MANAGEMENT_URL=http://<takin-web-host>:<port>
+export APP_NAME=my-python-app
+export AGENT_ID=my-python-agent
+export ZK_ENABLED=false
+export AUTO_REGISTER_APP=true
+export SHADOW_ROUTING=false
+python scripts/quick_verify.py
+```
 
-**版本**: v2.0.0
-**更新日期**: 2026-04-23
+观察点：
+
+- `ExternalAPI 初始化成功`
+- 心跳请求无报错
+- 控制台是否出现应用或探针安装信息
+
+### 第三步：再验 ZooKeeper
+
+```bash
+export ZK_ENABLED=true
+export REGISTER_NAME=zookeeper
+export SIMULATOR_ZK_SERVERS=<zk1:2181,zk2:2181,zk3:2181>
+export SIMULATOR_APP_NAME=my-python-app
+python -c "import pylinkagent; import time; time.sleep(30)"
+```
+
+观察点：
+
+- ZK 是否出现 `/config/log/pradar/client/<app>/<agentId>`
+- 节点数据里是否包含 `agentLanguage=PYTHON`
+- 节点是否为临时节点
+
+### 第四步：最后验影子路由
+
+等控制台和 ZK 基础链路稳定后，再打开：
+
+```bash
+export SHADOW_ROUTING=true
+```
+
+然后配合控制台下发影子库配置，进入 MySQL 隔离验证。
+
+## 6. 常用环境变量
+
+主链路：
+
+- `PYLINKAGENT_ENABLED`
+- `MANAGEMENT_URL`
+- `APP_NAME`
+- `AGENT_ID`
+- `AUTO_REGISTER_APP`
+- `CONFIG_FETCH_INTERVAL`
+- `HEARTBEAT_INTERVAL`
+- `COMMAND_POLL_INTERVAL`
+
+请求头兼容字段：
+
+- `USER_APP_KEY`
+- `TENANT_APP_KEY`
+- `USER_ID`
+- `ENV_CODE`
+
+ZooKeeper：
+
+- `ZK_ENABLED`
+- `REGISTER_NAME`
+- `SIMULATOR_ZK_SERVERS`
+- `SIMULATOR_APP_NAME`
+- `SIMULATOR_AGENT_ID`
+- `SIMULATOR_ENV_CODE`
+
+## 7. 已知限制
+
+- 命令拉取已接上，但安装、升级、卸载 handler 仍是占位实现
+- `ConfigFetcher` 当前真正消费到运行时的仍以影子库配置为主
+- `instrument_simulator`、`simulator_agent` 目前不是可用接入方式
+- 控制台、ZK、影子路由的字段兼容仍在继续对齐 Java Agent

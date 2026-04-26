@@ -1,11 +1,9 @@
 """
-instrument-modules - 可插拔插桩模块集合
+Legacy instrument module package.
 
-包含：
-- base: 模块基类
-- 各种中间件/框架的插桩模块
-
-新增模块请参考 module-development.md
+This directory is not part of the current PyLinkAgent bootstrap path.
+Use README.md and docs/architecture.md as the source of truth for the
+current integration approach.
 """
 
 from .base import InstrumentModule

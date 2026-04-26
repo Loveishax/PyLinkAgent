@@ -7,6 +7,7 @@ PyLinkAgent ZooKeeper 配置管理
 import os
 import socket
 import getpass
+import platform
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 import logging
@@ -22,7 +23,7 @@ class ZkConfig:
     zk_servers: str = "7.198.155.26:2181,7.198.153.71:2181,7.198.152.234:2181"
 
     # ZK 路径配置
-    status_base_path: str = "/config/log/pradar/status"  # Agent 状态路径
+    status_base_path: str = "/config/log/pradar/client"  # Java agent 默认在线节点路径
     client_base_path: str = "/config/log/pradar/client"  # Pradar 模块路径
     server_base_path: str = "/config/log/pradar/server"  # 日志服务器发现路径
 
@@ -235,7 +236,7 @@ class ZkConfig:
 
             # JVM/Python 信息 (兼容 Java)
             "jvmArgs": jvm_args or " ".join(os.environ.get('PYTHONOPTIMIZE', '').split()),
-            "jdkVersion": jdk_version or f"Python {os.python_version()}",
+            "jdkVersion": jdk_version or f"Python {platform.python_version()}",
             "jvmArgsCheck": "PASS",  # Python 不做 JVM 参数检查
 
             # 租户信息

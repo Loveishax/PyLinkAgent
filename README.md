@@ -1,328 +1,194 @@
 # PyLinkAgent
 
-[![LICENSE](https://img.shields.io/github/license/pingcap/tidb.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
-[![Language](https://img.shields.io/badge/Language-Python-blue.svg)](https://www.python.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是与 `Takin-web` 控制台和 ZooKeeper 保持可兼容的基础交互，并在压测流量进入后提供影子路由能力。
 
-PyLinkAgent 是一个基于 Python 的链路追踪探针 Agent，与 Takin-web / takin-ee-web 控制台对接，提供应用性能监控和压测流量标识能力。
+当前代码已经完成第一轮 P0 收敛，重点是把探针从“骨架代码”收敛到“可安装、可自动加载、可启动、可停止”的状态。现阶段优先目标不是追平 Java LinkAgent 的全部模块生态，而是先完成以下闭环：
 
-## 核心特性
+- Python 进程静态挂载
+- 控制台应用注册和 HTTP 心跳
+- ZooKeeper 在线节点注册
+- 影子库配置拉取与运行时接线
+- MySQL/Redis/ES/Kafka/HTTP 的基础影子路由
 
-### Takin-web 对接功能
+## 当前状态
 
-- **心跳上报**: 定期向 Takin-web 上报 Agent 状态
-- **配置拉取**: 动态拉取影子库、影子 Job 等配置
-- **命令接收**: 接收并执行控制台下发的命令（安装/升级/卸载）
-- **流量标识**: 识别压测流量并路由到影子库
-- **影子路由**: 零侵入组件拦截 (MySQL/Redis/ES/Kafka/HTTP)
-- **多租户支持**: 支持 tenant_id 和 env_code 隔离
+已落地：
 
-### 原始插桩功能
+- `sitecustomize` 自动加载入口
+- `pylinkagent-run` 启动包装器
+- `bootstrap` 主链路收敛
+- `ExternalAPI` 基础控制台对接
+- `ConfigFetcher`、`HeartbeatReporter`、`CommandPoller` 后台线程
+- `ZooKeeper` 心跳基础设施
+- `MySQL`、`SQLAlchemy`、`Redis`、`Elasticsearch`、`Kafka`、`HTTP` 拦截器骨架
 
-- **零代码侵入**：无需修改任何业务代码，通过环境变量或包装器启动即可
-- **数据采集**：支持 Trace、Metric、自定义埋点
-- **函数控制**：支持流量染色、Mock、Chaos 注入、压测标、限流等
-- **模块化架构**：可插拔的模块设计，支持快速扩展新框架
-- **异步支持**：完整支持 asyncio 异步场景
-- **主流框架支持**：FastAPI、Flask、Django、requests、SQLAlchemy、Redis 等
+尚未闭环或仅部分实现：
 
-## 快速开始
+- 控制台远程配置的完整消费链路
+- 命令安装、升级、卸载的真实执行
+- Java Agent 级别的模块生态
+- 日志服务发现、client path/watch 的完整 ZK 集成
+- `instrument_simulator` / `simulator_agent` 旧框架收敛
 
-### 1. 安装依赖
+## 目录
+
+当前应以 `pylinkagent/` 为主线：
+
+```text
+PyLinkAgent/
+├── pylinkagent/
+│   ├── auto_bootstrap.py
+│   ├── bootstrap.py
+│   ├── cli.py
+│   ├── controller/
+│   ├── pradar/
+│   ├── shadow/
+│   └── zookeeper/
+├── docs/
+├── scripts/
+├── sitecustomize.py
+└── pyproject.toml
+```
+
+`instrument_simulator/`、`simulator_agent/`、`instrument_modules/` 这条旧复刻线目前没有被收敛到可运行主链路中，不应作为当前接入方式。
+
+## 安装
 
 ```bash
 cd PyLinkAgent
 pip install -r requirements.txt
+pip install -e .
 ```
 
-### 2. 配置环境变量
+`pip install -e .` 会安装当前包，并把 `sitecustomize.py` 与 `pylinkagent-run` 一并暴露出来。
+
+## 启动方式
+
+### 1. `sitecustomize` 自动加载
+
+这是最接近 Java `-javaagent` 的方式。安装包后，只要 Python 进程能导入当前环境中的 `sitecustomize`，并设置了 `PYLINKAGENT_ENABLED=true`，解释器启动时就会自动尝试拉起探针。
 
 ```bash
-# Takin-web 地址
-export MANAGEMENT_URL=http://localhost:9999
-
-# 应用配置
-export APP_NAME=my-app
-export AGENT_ID=agent-001
-```
-
-### 3. 运行验证脚本
-
-```bash
-# 验证与控制台通信
-python scripts/test_takin_web_communication.py
-
-# 快速启动
-python scripts/quickstart.py
-```
-
-### 4. 作为库使用
-
-```python
-from pylinkagent.controller.external_api import ExternalAPI, HeartRequest
-from pylinkagent.controller.config_fetcher import ConfigFetcher
-import os
-import time
-
-# 初始化
-api = ExternalAPI(
-    tro_web_url="http://localhost:9999",
-    app_name="my-app",
-    agent_id="agent-001",
-)
-api.initialize()
-
-# 启动配置拉取
-fetcher = ConfigFetcher(api, interval=60)
-fetcher.start()
-
-# 发送心跳
-heart_request = HeartRequest(
-    project_name="my-app",
-    agent_id="agent-001",
-    ip_address="192.168.1.100",
-    progress_id=str(os.getpid()),
-)
-commands = api.send_heartbeat(heart_request)
-
-# 处理命令
-for cmd in commands:
-    if cmd.id > 0:
-        print(f"执行命令：{cmd.id}")
-        api.report_command_result(cmd.id, True)
-
-# 保持运行
-try:
-    while True:
-        time.sleep(15)
-except KeyboardInterrupt:
-    fetcher.stop()
-    api.shutdown()
-```
-
-## 快速开始 (原始插桩功能)
-
-### 方式一：环境变量注入（推荐）
-
-```bash
-# 1. 安装
-pip install pylinkagent
-
-# 2. 设置环境变量
 export PYLINKAGENT_ENABLED=true
-export PYLINKAGENT_PLATFORM_URL=http://localhost:8080
-
-# 3. 启动应用
+export MANAGEMENT_URL=http://localhost:9999
+export APP_NAME=my-python-app
+export AGENT_ID=my-python-agent
 python app.py
 ```
 
-### 方式二：包装器启动
+### 2. `pylinkagent-run` 包装启动
 
 ```bash
 pylinkagent-run python app.py
 ```
 
-### 方式三：代码中导入
+这个命令会自动注入 `PYLINKAGENT_ENABLED=true`，适合不想改业务启动命令的场景。
+
+### 3. 显式导入
 
 ```python
-# 在 app.py 的第一行导入
+import os
+
+os.environ["PYLINKAGENT_ENABLED"] = "true"
+os.environ["MANAGEMENT_URL"] = "http://localhost:9999"
+os.environ["APP_NAME"] = "my-python-app"
+
 import pylinkagent
-pylinkagent.bootstrap()
-
-# 然后是你的应用代码
-from fastapi import FastAPI
-app = FastAPI()
 ```
 
-## 项目结构
+`pylinkagent.__init__` 会调用 `auto_bootstrap()`。如果只想手动控制，也可以直接调用 `pylinkagent.bootstrap()`。
 
-```
-PyLinkAgent/
-├── pylinkagent/                 # 核心包
-│   ├── controller/              # 控制器
-│   │   ├── external_api.py      # 外部 API (与控制台通信)
-│   │   └── config_fetcher.py    # 配置拉取器
-│   ├── shadow/                  # 影子路由
-│   │   ├── config_center.py     # 配置中心 (存储/热更新)
-│   │   ├── router.py            # 路由决策引擎
-│   │   ├── sql_rewriter.py      # SQL 表名重写
-│   │   ├── mysql_interceptor.py # MySQL 拦截
-│   │   ├── redis_interceptor.py # Redis 拦截
-│   │   ├── es_interceptor.py    # ES 拦截
-│   │   ├── kafka_interceptor.py # Kafka 拦截
-│   │   └── http_interceptor.py  # HTTP 拦截
-│   ├── pradar/                  # 链路追踪
-│   ├── zookeeper/               # ZK 集成
-├── scripts/                     # 脚本
-│   ├── verify_shadow_routing.py      # 影子路由验证
-│   └── comprehensive_verification.py # 综合验证
-├── database/                    # 数据库脚本
-│   └── pylinkagent_tables.sql   # 表定义
-├── docs/                        # 文档
-│   ├── SHADOW_ROUTING_GUIDE.md     # 影子路由指南
-│   ├── COMPREHENSIVE_VERIFICATION_GUIDE.md  # 综合验证指南
-│   ├── ZOOKEEPER_INTEGRATION.md    # ZK 集成
-│   └── architecture.md             # 架构设计
-├── requirements.txt             # 依赖
-└── README.md                    # 本文档
-```
+## 关键环境变量
 
-### 原始插桩模块
+控制台和主链路：
 
-```
-├── pylinkagent/                # 核心包
-│   ├── core/                   # 核心引擎
-│   ├── patcher/                # 插桩引擎
-│   ├── lifecycle/              # 生命周期管理
-│   └── utils/                  # 工具函数
-├── instrument_simulator/       # 探针框架
-├── instrument_modules/         # 插桩模块
-│   ├── requests_module/        # requests 插桩
-│   ├── fastapi_module/         # FastAPI 插桩
-│   └── ...
-└── config/                     # 配置文件
-```
+- `PYLINKAGENT_ENABLED`: 是否允许自动加载，`true/false`
+- `MANAGEMENT_URL`: 控制台地址，默认 `http://localhost:9999`
+- `APP_NAME`: 应用名，默认 `default-app`
+- `AGENT_ID`: 探针实例 ID，默认 `pylinkagent-<pid>`
+- `AUTO_REGISTER_APP`: 是否自动注册应用，默认 `true`
+- `HEARTBEAT_INTERVAL`: HTTP 心跳间隔秒数，默认 `60`
+- `CONFIG_FETCH_INTERVAL`: 配置拉取间隔秒数，默认 `60`
+- `COMMAND_POLL_INTERVAL`: 命令轮询间隔秒数，默认 `30`
 
-## 框架支持
+控制台请求头兼容字段：
 
-| 类型 | 名称 | 状态 |
-|------|------|------|
-| HTTP 客户端 | requests | ✅ |
-| HTTP 客户端 | httpx | ✅ |
-| Web 框架 | FastAPI | ✅ |
+- `USER_APP_KEY`
+- `TENANT_APP_KEY`
+- `USER_ID`
+- `ENV_CODE`
+- `HTTP_MUST_HEADERS`
 
-> ✅ 已实现 | ⏳ 计划中
+ZooKeeper：
 
-## 开发与构建
+- `ZK_ENABLED`: 是否启用 ZK，默认 `true`
+- `REGISTER_NAME`: 默认 `zookeeper`
+- `SIMULATOR_ZK_SERVERS`
+- `SIMULATOR_APP_NAME`
+- `SIMULATOR_AGENT_ID`
+- `SIMULATOR_ENV_CODE`
+- `SIMULATOR_TENANT_ID`
+- `SIMULATOR_USER_ID`
+- `SIMULATOR_TENANT_APP_KEY`
 
-```bash
-# 安装依赖
-pip install -r requirements.txt
+影子路由：
 
-# 安装开发依赖
-pip install -r requirements-dev.txt
+- `SHADOW_ROUTING`: 是否启用影子路由，默认 `true`
 
-# 运行测试
-pytest tests/ -v
-```
+## 已确认的本地修改
 
-## 核心接口
+这一轮已经写入本地文件的核心改动如下：
 
-### ExternalAPI
+- `pyproject.toml`
+  - 新增 `pylinkagent-run`
+  - 打包范围改为 `pylinkagent*`
+  - 暴露 `sitecustomize.py`
+- `sitecustomize.py`
+  - 新增解释器启动自动加载钩子
+- `pylinkagent/auto_bootstrap.py`
+  - 新增环境变量驱动的自动启动逻辑
+- `pylinkagent/cli.py`
+  - 新增包装启动器
+- `pylinkagent/bootstrap.py`
+  - 调整启动顺序
+  - 保留实际 interceptor 实例并正确反注册
+  - 接入 `SQLAlchemy` 拦截器
+  - 启动和停止链路收敛
+- `pylinkagent/controller/config_fetcher.py`
+- `pylinkagent/controller/heartbeat.py`
+- `pylinkagent/controller/command_poller.py`
+  - 后台线程使用 `Event.wait()`，停止不再被初始睡眠卡住
+- `pylinkagent/controller/external_api.py`
+  - 补齐 `agent_version` / `simulator_version`
+- `pylinkagent/zookeeper/config.py`
+  - 在线节点默认路径调整为 `/config/log/pradar/client`
+  - 修复 Python 版本字段生成
 
-与控制台 (Takin-web) 通信的核心接口：
+## 已完成验证
 
-| 方法 | 功能 | 接口路径 |
-|------|------|----------|
-| `send_heartbeat()` | 心跳上报 | `/api/agent/heartbeat` |
-| `fetch_shadow_database_config()` | 拉取影子库配置 | `/api/link/ds/configs/pull` |
-| `get_latest_command()` | 拉取命令 | `/api/agent/application/node/probe/operate` |
-| `report_command_result()` | 上报命令结果 | `/api/agent/application/node/probe/operateResult` |
-| `upload_application_info()` | 上传应用信息 | `/api/application/center/app/info` |
-| `fetch_shadow_job_config()` | 拉取影子 Job 配置 | `/api/shadow/job/queryByAppName` |
+已实际验证：
 
-### ConfigFetcher
+- 关键文件 `py_compile` 通过
+- `import pylinkagent` 在 `PYLINKAGENT_ENABLED=true` 下会自动尝试拉起探针
+- `pylinkagent.shutdown()` 能正常关闭后台线程
+- `pylinkagent-run python -c ...` 会注入 `PYLINKAGENT_ENABLED=true`
+- 在本地无控制台服务时，自动加载启动耗时约 `0.66s`，不会因为同步拉配置而长时间卡住
 
-定时拉取配置的器：
+详细验证步骤见 [docs/verification.md](docs/verification.md)。
 
-```python
-fetcher = ConfigFetcher(api, interval=60)
-fetcher.start()
+## 文档索引
 
-# 注册配置变更回调
-fetcher.on_config_change(lambda key, old, new: print(f"{key} 变更"))
+- [快速开始](docs/quickstart.md)
+- [当前架构](docs/architecture.md)
+- [验证方案](docs/verification.md)
+- [ZooKeeper 集成现状](docs/ZOOKEEPER_INTEGRATION.md)
+- [影子路由现状](docs/SHADOW_ROUTING_GUIDE.md)
 
-# 获取当前配置
-config = fetcher.get_config()
-for name, cfg in config.shadow_database_configs.items():
-    print(f"{name}: {cfg.url} -> {cfg.shadow_url}")
-```
+## 当前建议
 
-## 配置项
+如果目标是先做出“Python 版本的可接入 LinkAgent”，后续优先级建议是：
 
-| 环境变量 | 说明 | 默认值 |
-|----------|------|--------|
-| `MANAGEMENT_URL` | Takin-web 地址 | `http://localhost:9999` |
-| `APP_NAME` | 应用名称 | `test-app` |
-| `AGENT_ID` | Agent ID | `pylinkagent-001` |
-| `NODE_KEY` | 节点标识 | `pylinkagent-<pid>` |
-| `REGISTER_NAME` | 注册中心 (zookeeper/kafka) | `zookeeper` |
-
-## 数据库表
-
-PyLinkAgent 使用以下数据库表（由 Takin-web 管理）：
-
-| 表名 | 说明 |
-|------|------|
-| `t_agent_report` | 探针心跳数据 |
-| `t_application_mnt` | 应用管理 |
-| `t_application_ds_manage` | 数据源配置 |
-| `t_shadow_table_datasource` | 影子表数据源 |
-| `t_shadow_job_config` | 影子 Job 配置 |
-| `t_shadow_mq_consumer` | 影子 MQ 消费者 |
-| `t_application_node_probe` | 探针操作记录 |
-
-创建表：
-```bash
-mysql -u root -p takin_web < database/pylinkagent_tables.sql
-```
-
-## 文档
-
-- [影子路由指南 (docs/SHADOW_ROUTING_GUIDE.md)](docs/SHADOW_ROUTING_GUIDE.md) - 影子路由完整流程
-- [综合验证指南 (docs/COMPREHENSIVE_VERIFICATION_GUIDE.md)](docs/COMPREHENSIVE_VERIFICATION_GUIDE.md) - 验证脚本使用说明
-- [架构设计 (docs/architecture.md)](docs/architecture.md) - 架构与插桩设计
-
-## 故障排查
-
-### 连接被拒绝
-
-```bash
-# 检查 Takin-web 是否运行
-curl http://localhost:9999
-
-# 检查端口
-netstat -an | grep 9999
-```
-
-### 配置拉取返回空
-
-- 确认应用在 Takin-web 中已注册
-- 确认影子库配置已创建
-
-### 心跳无记录
-
-```sql
--- 检查应用是否存在
-SELECT * FROM t_application_mnt WHERE APPLICATION_NAME = 'my-app';
-
--- 查看心跳记录
-SELECT * FROM t_agent_report ORDER BY gmt_update DESC LIMIT 10;
-```
-
-## 版本历史
-
-### 2.0.0 (2026-04-11) - 重构版本
-
-- 重构与控制台通信接口，对接 Takin-web
-- 新增影子库配置拉取
-- 重写 ConfigFetcher
-- 完善验证工具和文档
-
-### 1.0.0 (早期版本)
-
-- 基础探针功能
-- 原始插桩模块
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 许可证
-
-Apache 2.0 License
-
-## 社区
-
-- 邮件列表：pylinkagent@googlegroups.com
-- GitHub Discussions: https://github.com/your-org/PyLinkAgent/discussions
+1. 对齐控制台注册、心跳、ZK 节点字段
+2. 把影子库、白名单、全局开关真正灌进运行时
+3. 先闭合 `HTTP 入口染色 -> MySQL 影子库切换`
+4. 再扩 Redis、Kafka、ES 的联动配置

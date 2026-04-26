@@ -35,6 +35,7 @@ class PyLinkAgentBootstrapper:
         self._zk_integration = None
         self._app_registrator = None
         self._shadow_enabled = False
+        self._shadow_interceptors = []
         self._is_running = False
         self._shutdown_hooks = []
 
@@ -61,12 +62,12 @@ class PyLinkAgentBootstrapper:
             # 3. 初始化 ZooKeeper (P0 任务)
             self._init_zookeeper()
 
-            # 4. 启动影子路由 (P0 核心功能)
-            self._init_shadow_routing()
-
-            # 5. 启动配置拉取器
+            # 4. 启动配置拉取器
             if not self._start_config_fetcher():
                 logger.warning("配置拉取器启动失败，继续启动")
+
+            # 5. 启动影子路由 (P0 核心功能)
+            self._init_shadow_routing()
 
             # 6. 启动心跳上报 (HTTP)
             if not self._start_heartbeat_reporter():
@@ -190,6 +191,7 @@ class PyLinkAgentBootstrapper:
             from .shadow.es_interceptor import ESShadowInterceptor
             from .shadow.kafka_interceptor import KafkaShadowInterceptor
             from .shadow.http_interceptor import HTTPShadowInterceptor
+            from .shadow.sqlalchemy_interceptor import SQLAlchemyShadowInterceptor
 
             # 获取配置中心和路由器
             config_center = get_config_center()
@@ -208,6 +210,7 @@ class PyLinkAgentBootstrapper:
                 ESShadowInterceptor(router),
                 KafkaShadowInterceptor(router),
                 HTTPShadowInterceptor(router),
+                SQLAlchemyShadowInterceptor(router),
             ]
 
             patched_count = 0
@@ -215,6 +218,8 @@ class PyLinkAgentBootstrapper:
                 if interceptor.patch():
                     patched_count += 1
 
+            self._shadow_interceptors = interceptors
+            self._on_shadow_config_change(config_center)
             self._shadow_enabled = True
             logger.info(f"  影子路由已启用 ({patched_count}/{len(interceptors)} 个拦截器)")
 
@@ -298,7 +303,13 @@ class PyLinkAgentBootstrapper:
 
     def shutdown(self) -> None:
         """关闭 Agent"""
-        if not self._is_running:
+        if not self._is_running and not any([
+            self._heartbeat_reporter,
+            self._config_fetcher,
+            self._command_poller,
+            self._zk_integration,
+            self._external_api,
+        ]):
             return
 
         logger.info("=" * 60)
@@ -311,46 +322,48 @@ class PyLinkAgentBootstrapper:
         if self._heartbeat_reporter:
             self._heartbeat_reporter.stop()
             logger.info("  HTTP 心跳已停止")
+            self._heartbeat_reporter = None
 
         # 2. 停止配置拉取
         if self._config_fetcher:
             self._config_fetcher.stop()
             logger.info("  配置拉取已停止")
+            self._config_fetcher = None
 
         # 3. 停止命令轮询
         if self._command_poller:
             self._command_poller.stop()
             logger.info("  命令轮询已停止")
+            self._command_poller = None
 
         # 4. 关闭 ZooKeeper (如果启用)
         if self._zk_integration:
             from .controller import shutdown_zk
             shutdown_zk()
             logger.info("  ZooKeeper 已关闭")
+            self._zk_integration = None
 
         # 5. 关闭影子路由
         if self._shadow_enabled:
             try:
-                from .shadow.mysql_interceptor import MySQLShadowInterceptor
-                from .shadow.redis_interceptor import RedisShadowInterceptor
-                from .shadow.es_interceptor import ESShadowInterceptor
-                from .shadow.kafka_interceptor import KafkaShadowInterceptor
-                from .shadow.http_interceptor import HTTPShadowInterceptor
-                for cls in [MySQLShadowInterceptor, RedisShadowInterceptor, ESShadowInterceptor, KafkaShadowInterceptor, HTTPShadowInterceptor]:
+                for interceptor in self._shadow_interceptors:
                     try:
-                        instance = cls.__new__(cls)
-                        instance._patched = True
-                        instance.unpatch()
+                        interceptor.unpatch()
                     except Exception:
                         pass
+                self._shadow_interceptors = []
                 logger.info("  影子路由已关闭")
             except Exception:
                 pass
+            self._shadow_enabled = False
 
         # 6. 关闭 ExternalAPI
         if self._external_api:
             self._external_api.shutdown()
             logger.info("  ExternalAPI 已关闭")
+            self._external_api = None
+
+        self._app_registrator = None
 
         logger.info("=" * 60)
         logger.info("PyLinkAgent 已关闭")
