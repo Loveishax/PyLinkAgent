@@ -1,11 +1,9 @@
 """CLI entrypoints for PyLinkAgent."""
 
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
-from typing import Sequence
+from typing import Optional, Sequence
 
 
 def _build_command(argv: Sequence[str]) -> list[str]:
@@ -14,7 +12,7 @@ def _build_command(argv: Sequence[str]) -> list[str]:
     return list(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _build_command(sys.argv[1:] if argv is None else argv)
     env = os.environ.copy()
     env["PYLINKAGENT_ENABLED"] = "true"

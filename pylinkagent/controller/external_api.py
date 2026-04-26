@@ -11,7 +11,7 @@ ExternalAPI - PyLinkAgent 外部 API
 - 在线升级
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Type
 from dataclasses import dataclass, field
 import logging
 import time
@@ -152,6 +152,10 @@ class ExternalAPI:
 
     # 影子 MQ 消费者配置 (对应 Java: ApplicationConfigHttpResolver.TRO_SHADOW_MQ_CONSUMER_URL)
     SHADOW_MQ_CONSUMER_URL = "/api/agent/configs/shadow/consumer"
+
+    # ==================== 开关相关接口 ====================
+    APP_PRESSURE_SWITCH_STATUS_URL = "/api/application/center/app/switch/agent"
+    APP_WHITE_LIST_SWITCH_STATUS_URL = "/api/global/switch/whitelist"
 
     # ACK 接口 (保留)
     ACK_URL = "/api/agent/event/ack"
@@ -484,6 +488,46 @@ class ExternalAPI:
             logger.error(f"拉取远程调用配置失败：{e}")
             return None
 
+    def fetch_cluster_test_switch(self) -> Optional[bool]:
+        """拉取应用压测开关状态"""
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return None
+
+        try:
+            response = self._request("GET", self.APP_PRESSURE_SWITCH_STATUS_URL)
+            data = self._extract_success_data(response)
+            if not isinstance(data, dict):
+                return None
+            return self._switch_status_to_bool(data.get("switchStatus"))
+        except Exception as e:
+            logger.error(f"拉取压测开关失败：{e}")
+            return None
+
+    def fetch_whitelist_switch(self) -> Optional[bool]:
+        """拉取白名单开关状态"""
+        if not self._initialized:
+            logger.warning("ExternalAPI 未初始化")
+            return None
+
+        try:
+            response = self._request("GET", self.APP_WHITE_LIST_SWITCH_STATUS_URL)
+            data = self._extract_success_data(response)
+            if not isinstance(data, dict):
+                return None
+
+            switch_status = data.get("switchStatus")
+            if switch_status is not None:
+                return self._switch_status_to_bool(switch_status)
+
+            switch_flag = data.get("switchFlag")
+            if switch_flag is not None:
+                return bool(int(switch_flag))
+            return None
+        except Exception as e:
+            logger.error(f"拉取白名单开关失败：{e}")
+            return None
+
     def upload_application_info(self, app_info: Optional[Dict[str, Any]] = None) -> bool:
         """
         上传应用信息
@@ -644,9 +688,10 @@ class ExternalAPI:
         url = f"{self.SHADOW_REDIS_SERVER_URL}?appName={self.app_name}"
         try:
             response = self._request("GET", url)
-            if response:
+            data = self._extract_success_data(response, default_type=list)
+            if data is not None:
                 logger.info(f"影子 Redis 配置拉取成功")
-            return response
+            return data
         except Exception as e:
             logger.error(f"拉取影子 Redis 配置失败：{e}")
             return None
@@ -663,9 +708,10 @@ class ExternalAPI:
         url = f"{self.SHADOW_ES_SERVER_URL}?appName={self.app_name}"
         try:
             response = self._request("GET", url)
-            if response:
+            data = self._extract_success_data(response, default_type=list)
+            if data is not None:
                 logger.info(f"影子 ES 配置拉取成功")
-            return response
+            return data
         except Exception as e:
             logger.error(f"拉取影子 ES 配置失败：{e}")
             return None
@@ -682,9 +728,10 @@ class ExternalAPI:
         url = f"{self.SHADOW_MQ_CONSUMER_URL}?appName={self.app_name}"
         try:
             response = self._request("GET", url)
-            if response:
+            data = self._extract_success_data(response, default_type=list)
+            if data is not None:
                 logger.info(f"影子 Kafka 配置拉取成功")
-            return response
+            return data
         except Exception as e:
             logger.error(f"拉取影子 Kafka 配置失败：{e}")
             return None
@@ -776,6 +823,34 @@ class ExternalAPI:
             headers.update(self.extra_headers)
 
         return headers
+
+    @staticmethod
+    def _switch_status_to_bool(status: Any) -> Optional[bool]:
+        """把 OPENED/CLOSED 状态解析成布尔值"""
+        if status is None:
+            return None
+        status = str(status).strip().upper()
+        if status == "OPENED":
+            return True
+        if status == "CLOSED":
+            return False
+        return None
+
+    @staticmethod
+    def _extract_success_data(response: Any, default_type: Optional[Type[Any]] = None) -> Any:
+        """从控制台响应中提取 data 字段"""
+        if response is None:
+            return None
+        if isinstance(response, dict):
+            if response.get("success", True) is False:
+                return None
+            if "data" in response:
+                return response.get("data")
+        if default_type and isinstance(response, default_type):
+            return response
+        if default_type is None:
+            return response
+        return None
 
     def _request(
         self,

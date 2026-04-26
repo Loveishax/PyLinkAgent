@@ -295,6 +295,19 @@ class ShadowConfigCenter:
         with self._lock:
             return dict(self._redis_configs)
 
+    def load_redis_configs(self, configs: List[ShadowRedisConfig]) -> None:
+        """批量加载影子 Redis 配置"""
+        with self._lock:
+            old = dict(self._redis_configs)
+            new = {}
+            for cfg in configs:
+                key = f"{cfg.original_host}:{cfg.original_port}"
+                new[key] = cfg
+            self._redis_configs = new
+            if old != new:
+                logger.info(f"批量加载 {len(configs)} 个影子 Redis 配置")
+                self._notify("redis_configs", old, new)
+
     # ==================== Elasticsearch configs ====================
 
     def register_es_config(self, key: str, config: ShadowEsConfig) -> None:
@@ -312,6 +325,15 @@ class ShadowConfigCenter:
     def get_all_es_configs(self) -> Dict[str, ShadowEsConfig]:
         with self._lock:
             return dict(self._es_configs)
+
+    def load_es_configs(self, configs: Dict[str, ShadowEsConfig]) -> None:
+        """批量加载影子 ES 配置"""
+        with self._lock:
+            old = dict(self._es_configs)
+            self._es_configs = dict(configs)
+            if old != self._es_configs:
+                logger.info(f"批量加载 {len(configs)} 个影子 ES 配置")
+                self._notify("es_configs", old, self._es_configs)
 
     # ==================== Kafka configs ====================
 
@@ -331,6 +353,18 @@ class ShadowConfigCenter:
     def get_all_kafka_configs(self) -> Dict[str, ShadowKafkaConfig]:
         with self._lock:
             return dict(self._kafka_configs)
+
+    def load_kafka_configs(self, configs: List[ShadowKafkaConfig]) -> None:
+        """批量加载影子 Kafka 配置"""
+        with self._lock:
+            old = dict(self._kafka_configs)
+            new = {}
+            for cfg in configs:
+                new[cfg.original_bootstrap_servers] = cfg
+            self._kafka_configs = new
+            if old != new:
+                logger.info(f"批量加载 {len(configs)} 个影子 Kafka 配置")
+                self._notify("kafka_configs", old, new)
 
     # ==================== Callbacks ====================
 

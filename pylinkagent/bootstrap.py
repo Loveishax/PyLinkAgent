@@ -66,19 +66,22 @@ class PyLinkAgentBootstrapper:
             if not self._start_config_fetcher():
                 logger.warning("配置拉取器启动失败，继续启动")
 
-            # 5. 启动影子路由 (P0 核心功能)
+            # 5. 初始化运行时开关和白名单
+            self._init_runtime_config()
+
+            # 6. 启动影子路由 (P0 核心功能)
             self._init_shadow_routing()
 
-            # 6. 启动心跳上报 (HTTP)
+            # 7. 启动心跳上报 (HTTP)
             if not self._start_heartbeat_reporter():
                 logger.error("心跳上报启动失败")
                 return False
 
-            # 7. 启动命令轮询器
+            # 8. 启动命令轮询器
             if not self._start_command_poller():
                 logger.warning("命令轮询器启动失败，继续启动")
 
-            # 8. 注册关闭钩子
+            # 9. 注册关闭钩子
             self._register_shutdown_hooks()
 
             self._is_running = True
@@ -226,18 +229,108 @@ class PyLinkAgentBootstrapper:
         except Exception as e:
             logger.warning(f"  影子路由初始化失败: {e} (降级到正常模式)")
 
+    def _init_runtime_config(self) -> None:
+        """初始化 Pradar 运行时配置"""
+        try:
+            from .pradar import WhitelistManager
+
+            WhitelistManager.init()
+
+            if self._config_fetcher:
+                self._config_fetcher.on_config_change(
+                    lambda key, old, new: self._apply_runtime_config()
+                )
+                self._apply_runtime_config()
+        except Exception as e:
+            logger.warning(f"Pradar 运行时配置初始化失败: {e}")
+
     def _on_shadow_config_change(self, config_center) -> None:
         """处理影子配置变更"""
         try:
             # 从 ConfigFetcher 获取最新配置并更新 config_center
             if self._config_fetcher:
                 config = self._config_fetcher.get_config()
-                if config.shadow_database_configs:
-                    db_configs = list(config.shadow_database_configs.values())
-                    config_center.load_db_configs(db_configs)
-                    logger.info(f"影子库配置已更新: {len(db_configs)} 个")
+                config_center.load_db_configs(list(config.shadow_database_configs.values()))
+                config_center.load_redis_configs(list(config.shadow_redis_configs.values()))
+                config_center.load_es_configs(dict(config.shadow_es_configs))
+                config_center.load_kafka_configs(list(config.shadow_kafka_configs.values()))
+                logger.info(
+                    "影子配置已更新: db=%s, redis=%s, es=%s, kafka=%s",
+                    len(config.shadow_database_configs),
+                    len(config.shadow_redis_configs),
+                    len(config.shadow_es_configs),
+                    len(config.shadow_kafka_configs),
+                )
         except Exception as e:
             logger.warning(f"影子配置变更处理失败: {e}")
+
+    def _apply_runtime_config(self) -> None:
+        """把远程配置应用到 Pradar 运行时"""
+        try:
+            if not self._config_fetcher:
+                return
+
+            from .pradar import PradarSwitcher, WhitelistManager, MatchType
+
+            config = self._config_fetcher.get_config()
+
+            if config.cluster_test_switch is True:
+                PradarSwitcher.clear_cluster_test_unable()
+                PradarSwitcher.turn_cluster_test_switch_on()
+            elif config.cluster_test_switch is False:
+                PradarSwitcher.turn_cluster_test_switch_off()
+
+            if config.whitelist_switch is True:
+                PradarSwitcher.turn_white_list_switch_on()
+                WhitelistManager.enable_whitelist()
+            elif config.whitelist_switch is False:
+                PradarSwitcher.turn_white_list_switch_off()
+                WhitelistManager.disable_whitelist()
+
+            WhitelistManager.init()
+
+            match_type_map = {
+                "EXACT": MatchType.EXACT,
+                "PREFIX": MatchType.PREFIX,
+                "REGEX": MatchType.REGEX,
+                "CONTAINS": MatchType.CONTAINS,
+            }
+
+            for pattern in config.url_whitelist:
+                normalized, match_name = self._normalize_whitelist_pattern(pattern)
+                WhitelistManager.add_url_whitelist(normalized, match_type_map[match_name], "remote-call-config")
+            for pattern in config.rpc_whitelist:
+                normalized, match_name = self._normalize_whitelist_pattern(pattern)
+                WhitelistManager.add_rpc_whitelist(normalized, match_type_map[match_name], "remote-call-config")
+            for pattern in config.mq_whitelist:
+                normalized, match_name = self._normalize_whitelist_pattern(pattern)
+                WhitelistManager.add_mq_whitelist(normalized, match_type_map[match_name], "remote-call-config")
+            for pattern in config.cache_key_whitelist:
+                normalized, match_name = self._normalize_whitelist_pattern(pattern)
+                WhitelistManager.add_cache_key_whitelist(normalized, match_type_map[match_name], "remote-call-config")
+
+            logger.info(
+                "Pradar 运行时配置已应用: clusterTest=%s, whitelistSwitch=%s, url=%s, rpc=%s, mq=%s, cache=%s",
+                config.cluster_test_switch,
+                config.whitelist_switch,
+                len(config.url_whitelist),
+                len(config.rpc_whitelist),
+                len(config.mq_whitelist),
+                len(config.cache_key_whitelist),
+            )
+        except Exception as e:
+            logger.warning(f"Pradar 运行时配置应用失败: {e}")
+
+    @staticmethod
+    def _normalize_whitelist_pattern(pattern: str):
+        """根据简单规则把远程配置转换为 WhitelistManager 匹配模式"""
+        if pattern.startswith("*") and pattern.endswith("*") and len(pattern) > 2:
+            return pattern[1:-1], "CONTAINS"
+        if pattern.endswith("*") and len(pattern) > 1:
+            return pattern[:-1], "PREFIX"
+        if any(token in pattern for token in ["[", "]", "(", ")", "^", "$", "|"]):
+            return pattern, "REGEX"
+        return pattern, "EXACT"
 
     def _start_config_fetcher(self) -> bool:
         """启动配置拉取器"""

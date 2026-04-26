@@ -14,12 +14,17 @@ ConfigFetcher - PyLinkAgent 配置拉取
 import logging
 import time
 import threading
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Tuple
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 from .external_api import ExternalAPI
-from pylinkagent.shadow.config_center import ShadowDatabaseConfig
+from pylinkagent.shadow.config_center import (
+    ShadowDatabaseConfig,
+    ShadowRedisConfig,
+    ShadowEsConfig,
+    ShadowKafkaConfig,
+)
 from pylinkagent.shadow.config_center import ShadowConfigCenter
 
 
@@ -31,6 +36,19 @@ class ConfigData:
     """配置数据"""
     # 影子库配置 (key: datasourceName, value: ShadowDatabaseConfig)
     shadow_database_configs: Dict[str, ShadowDatabaseConfig] = field(default_factory=dict)
+    shadow_redis_configs: Dict[str, ShadowRedisConfig] = field(default_factory=dict)
+    shadow_es_configs: Dict[str, ShadowEsConfig] = field(default_factory=dict)
+    shadow_kafka_configs: Dict[str, ShadowKafkaConfig] = field(default_factory=dict)
+    shadow_job_configs: List[Dict[str, Any]] = field(default_factory=list)
+    remote_call_config: Dict[str, Any] = field(default_factory=dict)
+    url_whitelist: List[str] = field(default_factory=list)
+    rpc_whitelist: List[str] = field(default_factory=list)
+    mq_whitelist: List[str] = field(default_factory=list)
+    cache_key_whitelist: List[str] = field(default_factory=list)
+    block_list: List[str] = field(default_factory=list)
+    search_whitelist: List[str] = field(default_factory=list)
+    cluster_test_switch: Optional[bool] = None
+    whitelist_switch: Optional[bool] = None
 
     # 原始配置数据
     raw_config: Dict[str, Any] = field(default_factory=dict)
@@ -168,7 +186,11 @@ class ConfigFetcher:
         try:
             new_config = ConfigData()
 
-            # 1. 拉取影子库配置
+            # 1. 拉取开关配置
+            new_config.cluster_test_switch = self.external_api.fetch_cluster_test_switch()
+            new_config.whitelist_switch = self.external_api.fetch_whitelist_switch()
+
+            # 2. 拉取影子库配置
             shadow_db_data = self.external_api.fetch_shadow_database_config()
             if shadow_db_data:
                 for item in shadow_db_data:
@@ -178,57 +200,170 @@ class ConfigFetcher:
                         new_config.shadow_database_configs[key] = config
                         logger.debug(f"解析影子库配置: {config.url}")
 
-            # 2. 保存原始配置
+            # 3. 拉取远程调用配置
+            remote_call_data = self.external_api.fetch_remote_call_config() or {}
+            new_config.remote_call_config = remote_call_data
+            (
+                new_config.url_whitelist,
+                new_config.rpc_whitelist,
+                new_config.mq_whitelist,
+                new_config.cache_key_whitelist,
+                new_config.block_list,
+                new_config.search_whitelist,
+            ) = self._parse_remote_call_config(remote_call_data)
+
+            # 4. 拉取 Redis/ES/Kafka/Job 影子配置
+            shadow_redis_data = self.external_api.fetch_shadow_redis_config() or []
+            for item in shadow_redis_data:
+                config = ShadowRedisConfig.from_dict(item)
+                if config.original_host:
+                    key = f"{config.original_host}:{config.original_port}"
+                    new_config.shadow_redis_configs[key] = config
+
+            shadow_es_data = self.external_api.fetch_shadow_es_config() or []
+            for index, item in enumerate(shadow_es_data):
+                config = ShadowEsConfig.from_dict(item)
+                if config.original_hosts:
+                    key = ",".join(sorted(config.original_hosts))
+                    new_config.shadow_es_configs[key or str(index)] = config
+
+            shadow_kafka_data = self.external_api.fetch_shadow_kafka_config() or []
+            for item in shadow_kafka_data:
+                config = ShadowKafkaConfig.from_dict(item)
+                if config.original_bootstrap_servers:
+                    new_config.shadow_kafka_configs[config.original_bootstrap_servers] = config
+
+            new_config.shadow_job_configs = self.external_api.fetch_shadow_job_config() or []
+
+            # 5. 保存原始配置
             new_config.raw_config = {
+                "cluster_test_switch": new_config.cluster_test_switch,
+                "whitelist_switch": new_config.whitelist_switch,
                 "shadow_database_configs": shadow_db_data or [],
+                "remote_call_config": remote_call_data,
+                "shadow_redis_configs": shadow_redis_data,
+                "shadow_es_configs": shadow_es_data,
+                "shadow_kafka_configs": shadow_kafka_data,
+                "shadow_job_configs": new_config.shadow_job_configs,
             }
 
-            # 3. 检测配置变更
-            self._check_config_games(new_config)
+            # 6. 检测配置变更
+            self._check_config_changes(new_config)
 
-            # 4. 更新当前配置
+            # 7. 更新当前配置
             self._current_config = new_config
 
-            if new_config.shadow_database_configs:
-                logger.info(f"配置拉取成功：{len(new_config.shadow_database_configs)} 个影子库配置")
-            else:
-                logger.info("配置拉取成功：无影子库配置")
+            logger.info(
+                "配置拉取成功：db=%s, redis=%s, es=%s, kafka=%s, urlWhitelist=%s, clusterTestSwitch=%s",
+                len(new_config.shadow_database_configs),
+                len(new_config.shadow_redis_configs),
+                len(new_config.shadow_es_configs),
+                len(new_config.shadow_kafka_configs),
+                len(new_config.url_whitelist),
+                new_config.cluster_test_switch,
+            )
             return new_config
 
         except Exception as e:
             logger.error(f"拉取配置失败：{e}")
             return None
 
-    def _check_config_games(self, new_config: ConfigData) -> None:
+    def _check_config_changes(self, new_config: ConfigData) -> None:
         """
         检测配置变更并触发回调
 
         Args:
             new_config: 新配置
         """
-        # 检查影子库配置变更
-        old_keys = set(self._current_config.shadow_database_configs.keys())
-        new_keys = set(new_config.shadow_database_configs.keys())
+        tracked_fields = [
+            ("clusterTestSwitch", self._current_config.cluster_test_switch, new_config.cluster_test_switch),
+            ("whitelistSwitch", self._current_config.whitelist_switch, new_config.whitelist_switch),
+            ("shadowDatabaseConfigs", self._current_config.shadow_database_configs, new_config.shadow_database_configs),
+            ("shadowRedisConfigs", self._current_config.shadow_redis_configs, new_config.shadow_redis_configs),
+            ("shadowEsConfigs", self._current_config.shadow_es_configs, new_config.shadow_es_configs),
+            ("shadowKafkaConfigs", self._current_config.shadow_kafka_configs, new_config.shadow_kafka_configs),
+            ("shadowJobConfigs", self._current_config.shadow_job_configs, new_config.shadow_job_configs),
+            ("remoteCallConfig", self._current_config.remote_call_config, new_config.remote_call_config),
+            ("urlWhitelist", self._current_config.url_whitelist, new_config.url_whitelist),
+            ("rpcWhitelist", self._current_config.rpc_whitelist, new_config.rpc_whitelist),
+            ("mqWhitelist", self._current_config.mq_whitelist, new_config.mq_whitelist),
+            ("cacheKeyWhitelist", self._current_config.cache_key_whitelist, new_config.cache_key_whitelist),
+            ("blockList", self._current_config.block_list, new_config.block_list),
+            ("searchWhitelist", self._current_config.search_whitelist, new_config.search_whitelist),
+        ]
 
-        if old_keys != new_keys:
-            self._notify_config_change(
-                "shadowDatabaseConfigs",
-                self._current_config.shadow_database_configs,
-                new_config.shadow_database_configs
+        for key, old_value, new_value in tracked_fields:
+            if old_value != new_value:
+                self._notify_config_change(key, old_value, new_value)
+
+    @staticmethod
+    def _parse_remote_call_config(remote_call_data: Dict[str, Any]) -> Tuple[
+        List[str],
+        List[str],
+        List[str],
+        List[str],
+        List[str],
+        List[str],
+    ]:
+        """解析 Takin-web 远程调用配置"""
+        url_whitelist: List[str] = []
+        rpc_whitelist: List[str] = []
+        mq_whitelist: List[str] = []
+        cache_key_whitelist: List[str] = []
+        block_list: List[str] = []
+        search_whitelist: List[str] = []
+
+        if not remote_call_data:
+            return (
+                url_whitelist,
+                rpc_whitelist,
+                mq_whitelist,
+                cache_key_whitelist,
+                block_list,
+                search_whitelist,
             )
-            return
 
-        # 检查具体配置内容变更
-        for key in old_keys:
-            old_cfg = self._current_config.shadow_database_configs[key]
-            new_cfg = new_config.shadow_database_configs[key]
-            if old_cfg != new_cfg:
-                self._notify_config_change(
-                    "shadowDatabaseConfigs",
-                    self._current_config.shadow_database_configs,
-                    new_config.shadow_database_configs
-                )
-                return
+        for blacklist in remote_call_data.get("newBlists", []) or []:
+            if isinstance(blacklist, dict):
+                for key in blacklist.get("blacklists", []) or []:
+                    if key:
+                        cache_key_whitelist.append(str(key))
+
+        for whitelist in remote_call_data.get("wLists", []) or []:
+            if not isinstance(whitelist, dict):
+                continue
+
+            name = str(whitelist.get("INTERFACE_NAME", "")).strip()
+            config_type = str(whitelist.get("TYPE", "")).strip().lower()
+            if not name:
+                continue
+
+            if config_type == "http":
+                if name.startswith("mq:"):
+                    mq_whitelist.append(name[3:])
+                elif name.startswith("rabbitmq:"):
+                    mq_whitelist.append(name[9:])
+                elif name.startswith("search:"):
+                    search_whitelist.append(name[7:])
+                else:
+                    url_whitelist.append(name)
+            elif config_type in {"dubbo", "feign", "rpc", "grpc"}:
+                rpc_whitelist.append(name)
+            elif config_type == "mq":
+                mq_whitelist.append(name)
+            elif config_type == "search":
+                search_whitelist.append(name)
+            elif config_type == "block":
+                block_list.append(name)
+
+        return (
+            sorted(set(url_whitelist)),
+            sorted(set(rpc_whitelist)),
+            sorted(set(mq_whitelist)),
+            sorted(set(cache_key_whitelist)),
+            sorted(set(block_list)),
+            sorted(set(search_whitelist)),
+        )
 
     def _notify_config_change(
         self,

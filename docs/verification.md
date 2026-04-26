@@ -183,9 +183,10 @@ X-PyLinkAgent-Cluster-Test: 1
 
 1. Python 应用启动后控制台出现应用/探针实例
 2. ZK 中出现对应在线临时节点
-3. 控制台下发影子库配置后，`ConfigFetcher` 能拉到并进入 `ShadowConfigCenter`
-4. 带压测标记的 MySQL 流量切到影子库
-5. 非压测流量保持业务库不变
+3. 控制台下发压测开关、白名单开关后，运行时状态能跟着变化
+4. 控制台下发影子库配置后，`ConfigFetcher` 能拉到并进入 `ShadowConfigCenter`
+5. 带压测标记的 MySQL 流量切到影子库
+6. 非压测流量保持业务库不变
 
 ## 5. 内网环境建议记录的信息
 

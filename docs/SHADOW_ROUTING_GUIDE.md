@@ -26,6 +26,7 @@
 - 影子配置变更回调已能在启动后触发
 - `SQLAlchemy` interceptor 已被纳入默认 patch 列表
 - 关闭时会针对真实 interceptor 实例执行 `unpatch()`
+- `ShadowConfigCenter` 已开始接收 DB、Redis、ES、Kafka 四类远程影子配置
 
 ## 4. 当前仍然存在的关键缺口
 

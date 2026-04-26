@@ -19,12 +19,15 @@ PyLinkAgent 是一个面向 Python 应用的轻量探针，目标是与 `Takin-w
 - `bootstrap` 主链路收敛
 - `ExternalAPI` 基础控制台对接
 - `ConfigFetcher`、`HeartbeatReporter`、`CommandPoller` 后台线程
+- 压测总开关、白名单开关、远程调用白名单的运行时接线
 - `ZooKeeper` 心跳基础设施
 - `MySQL`、`SQLAlchemy`、`Redis`、`Elasticsearch`、`Kafka`、`HTTP` 拦截器骨架
 
 尚未闭环或仅部分实现：
 
 - 控制台远程配置的完整消费链路
+  - 已接通：压测开关、白名单开关、远程调用白名单基础消费
+  - 未闭环：Mock、forward、黑名单的完整策略执行
 - 命令安装、升级、卸载的真实执行
 - Java Agent 级别的模块生态
 - 日志服务发现、client path/watch 的完整 ZK 集成

@@ -55,11 +55,20 @@
 - `/api/link/es/server/configs/pull`
 - `/api/shadow/job/queryByAppName`
 - `/api/agent/configs/shadow/consumer`
+- `/api/application/center/app/switch/agent`
+- `/api/global/switch/whitelist`
 
 现状说明：
 
 - 接口定义不等于闭环完成
-- 目前真正跑进运行时主链路的仍主要是应用注册、HTTP 心跳、命令拉取骨架、影子库配置拉取
+- 目前真正跑进运行时主链路的包括：
+  - 应用注册
+  - HTTP 心跳
+  - 命令拉取骨架
+  - 影子库/Redis/ES/Kafka 配置加载
+  - 压测总开关
+  - 白名单开关
+  - 远程调用白名单基础消费
 
 ## 5. ZooKeeper
 
@@ -93,7 +102,8 @@
 
 当前影子路由的核心问题不是“完全没有”，而是：
 
-- 控制台拉到的非 MySQL 配置尚未完整灌入配置中心
+- 控制台拉到的影子库、Redis、ES、Kafka 配置已经开始灌入配置中心
+- 但 Job、Mock、forward、更多中间件策略还没形成闭环
 - 染色入口、全局开关、白名单等链路仍未和 Java Agent 等价
 
 ## 7. 旧框架的状态

@@ -73,6 +73,12 @@ class HeartbeatReporter:
         self.timeout = timeout
 
         self._status = AgentStatus()
+        self._status.agent_version = getattr(external_api, "agent_version", "1.0.0")
+        self._status.simulator_version = getattr(
+            external_api,
+            "simulator_version",
+            self._status.agent_version,
+        )
         self._command_results: List[Dict[str, Any]] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
