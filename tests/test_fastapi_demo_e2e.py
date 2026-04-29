@@ -1,13 +1,12 @@
-import importlib
+import json
 import os
+import subprocess
 import sys
 
 import pymysql
-from fastapi.testclient import TestClient
 
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MYSQL_CONNECT = {
     "host": "localhost",
@@ -30,44 +29,74 @@ def _count_rows(database: str) -> int:
 
 
 def test_fastapi_demo_routes_pressure_traffic_to_shadow_db():
-    os.environ["AUTO_REGISTER_APP"] = "false"
-    os.environ["ZK_ENABLED"] = "false"
-    os.environ["SHADOW_ROUTING"] = "true"
-    os.environ["HTTP_SERVER_TRACING"] = "true"
-    os.environ["APP_NAME"] = "fastapi-shadow-demo"
-    os.environ["DEMO_LOCAL_SHADOW_CONFIG"] = "true"
+    script = r"""
+import importlib
+import json
+import os
+import sys
 
-    from examples.fastapi_mysql_shadow_demo.init_demo_db import main as init_demo_db
+sys.path.insert(0, r'D:\soft\agent\LinkAgent-main\PyLinkAgent')
 
-    init_demo_db()
+os.environ['AUTO_REGISTER_APP'] = 'false'
+os.environ['ZK_ENABLED'] = 'false'
+os.environ['SHADOW_ROUTING'] = 'true'
+os.environ['HTTP_SERVER_TRACING'] = 'true'
+os.environ['APP_NAME'] = 'fastapi-shadow-demo'
+os.environ['DEMO_LOCAL_SHADOW_CONFIG'] = 'true'
+os.environ['DEMO_LOCAL_CLUSTER_TEST_SWITCH'] = 'true'
 
-    import pylinkagent
+from examples.fastapi_mysql_shadow_demo.init_demo_db import main as init_demo_db
+from fastapi.testclient import TestClient
 
-    pylinkagent.shutdown()
-    pylinkagent.bootstrap()
+init_demo_db()
 
-    demo_module = importlib.import_module("examples.fastapi_mysql_shadow_demo.app")
-    demo_module = importlib.reload(demo_module)
+import pylinkagent
 
-    biz_before = _count_rows("pylinkagent_demo_biz")
-    shadow_before = _count_rows("pylinkagent_demo_shadow")
+pylinkagent.shutdown()
+pylinkagent.bootstrap()
 
+demo_module = importlib.import_module('examples.fastapi_mysql_shadow_demo.app')
+demo_module = importlib.reload(demo_module)
+
+result = {}
+
+try:
     with TestClient(demo_module.app) as client:
-        normal_response = client.post("/users", json={"name": "normal-user"})
-        pressure_response = client.post(
-            "/users",
-            headers={"X-Pradar-Cluster-Test": "1"},
-            json={"name": "pressure-user"},
-        )
+        result['normal'] = client.post('/users', json={'name': 'normal-user'}).json()
+        result['pressure'] = client.post(
+            '/users',
+            headers={'X-Pradar-Cluster-Test': '1'},
+            json={'name': 'pressure-user'},
+        ).json()
+        result['runtime'] = client.get('/debug/runtime').json()
+finally:
+    pylinkagent.shutdown()
+
+print(json.dumps(result))
+"""
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = PROJECT_ROOT
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    payload = json.loads(lines[-1])
 
     biz_after = _count_rows("pylinkagent_demo_biz")
     shadow_after = _count_rows("pylinkagent_demo_shadow")
 
-    assert normal_response.status_code == 200
-    assert pressure_response.status_code == 200
-    assert normal_response.json()["database"] == "pylinkagent_demo_biz"
-    assert pressure_response.json()["database"] == "pylinkagent_demo_shadow"
-    assert biz_after == biz_before + 1
-    assert shadow_after == shadow_before + 1
-
-    pylinkagent.shutdown()
+    assert payload["normal"]["database"] == "pylinkagent_demo_biz"
+    assert payload["pressure"]["database"] == "pylinkagent_demo_shadow"
+    assert payload["runtime"]["shadow_db_config_count"] >= 1
+    assert payload["runtime"]["cluster_test_switch_enabled"] is True
+    assert biz_after == 3
+    assert shadow_after == 3

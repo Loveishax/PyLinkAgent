@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from pylinkagent.pradar import PradarSwitcher
+from pylinkagent.runtime_snapshot import get_runtime_snapshot
 from pylinkagent.shadow import ShadowDatabaseConfig, get_config_center
 
 
@@ -182,3 +183,8 @@ def debug_config():
         "business_jdbc_url": BUSINESS_JDBC_URL,
         "shadow_jdbc_url": SHADOW_JDBC_URL,
     }
+
+
+@app.get("/debug/runtime")
+def debug_runtime():
+    return get_runtime_snapshot()

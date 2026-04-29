@@ -90,10 +90,24 @@ python -m pytest tests/test_fastapi_demo_e2e.py -q
 
 - 普通请求写入 `pylinkagent_demo_biz`
 - 带 `X-Pradar-Cluster-Test: 1` 的请求写入 `pylinkagent_demo_shadow`
+- `GET /debug/runtime` 能看到当前探针运行状态、压测总开关和已加载影子库数量
 
 这说明下面这段链路在本地已经打通：
 
 `FastAPI 入口 -> 识别压测 header -> 建立 Pradar 上下文 -> pymysql.connect() 被改写 -> 写入 MySQL 影子库`
+
+### 1.7 HTTP 下游压测标记透传
+
+命令：
+
+```bash
+python -m pytest tests/test_http_shadow_propagation.py -q
+```
+
+覆盖：
+
+- `requests` 下游调用自动注入 `X-Pradar-Cluster-Test: 1`
+- `httpx` 同步和异步下游调用自动注入 `X-Pradar-Cluster-Test: 1`
 
 ## 2. 到哪一步可以去内网验证
 
@@ -237,6 +251,8 @@ ZooKeeper：
 - 日志里是否出现 `Pradar 运行时配置已应用`
 - 日志里是否出现 `影子配置已更新`
 - 压测请求时是否出现 `MySQL rerouted to shadow DB`
+- 访问 `GET /debug/runtime` 时，确认 `cluster_test_switch_enabled=true`，并检查 `db_mappings` 是否包含目标业务库
+- 如果应用会再调用下游 HTTP 服务，检查下游是否收到 `X-Pradar-Cluster-Test: 1`
 
 数据库：
 
@@ -254,3 +270,18 @@ ZooKeeper：
 - ZK 节点路径和节点内容截图
 - 普通请求和压测请求的返回结果
 - 业务库 / 影子库实际数据截图
+
+## 5. 诊断脚本
+
+可以直接运行：
+
+```bash
+python scripts/diagnose.py
+python scripts/diagnose.py http://127.0.0.1:8000
+```
+
+用途：
+
+- 输出当前环境变量和控制台基础连通性
+- 输出当前进程里的探针运行快照
+- 如果传入应用地址，会直接抓取 `/debug/runtime`

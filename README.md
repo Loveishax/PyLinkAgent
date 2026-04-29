@@ -102,6 +102,8 @@ python examples/fastapi_mysql_shadow_demo/init_demo_db.py
 
 - 普通请求写入 `pylinkagent_demo_biz`
 - 带 `X-Pradar-Cluster-Test: 1` 的请求写入 `pylinkagent_demo_shadow`
+- `GET /debug/runtime` 可返回当前探针运行快照
+- 压测流量下游 HTTP 调用会自动透传 `X-Pradar-Cluster-Test: 1`
 
 ## 已完成验证
 
@@ -123,6 +125,14 @@ python -m pytest tests/test_control_plane_alignment.py -q
 python -m pytest tests/test_http_ingress_tracing.py -q
 python -m pytest tests/test_shadow_mysql_routing.py -q
 python -m pytest tests/test_fastapi_demo_e2e.py -q
+python -m pytest tests/test_http_shadow_propagation.py -q
+```
+
+联调诊断：
+
+```bash
+python scripts/diagnose.py
+python scripts/diagnose.py http://127.0.0.1:8000
 ```
 
 ## 文档索引

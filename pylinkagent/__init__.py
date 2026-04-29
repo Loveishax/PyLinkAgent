@@ -11,6 +11,7 @@ from .auto_bootstrap import auto_bootstrap
 
 # 核心模块
 from .bootstrap import bootstrap, shutdown, is_running, get_bootstrapper
+from .runtime_snapshot import get_runtime_snapshot
 
 auto_bootstrap()
 
@@ -19,5 +20,6 @@ __all__ = [
     'shutdown',
     'is_running',
     'get_bootstrapper',
+    'get_runtime_snapshot',
     '__version__',
 ]

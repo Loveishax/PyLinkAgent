@@ -84,6 +84,23 @@ curl -X POST http://127.0.0.1:8000/users -H "X-Pradar-Cluster-Test: 1" -H "Conte
 - 普通请求返回 `database=pylinkagent_demo_biz`
 - 压测请求返回 `database=pylinkagent_demo_shadow`
 
+运行时快照：
+
+```bash
+curl http://127.0.0.1:8000/debug/runtime
+```
+
+重点关注：
+
+- `running`
+- `cluster_test_switch_enabled`
+- `shadow_db_config_count`
+- `db_mappings`
+
+如果 demo 里还会再调下游 HTTP 服务，当前探针也会自动透传：
+
+- `X-Pradar-Cluster-Test: 1`
+
 ## 3. 控制台联调模式
 
 如果要验证真实全链路，把下面两个本地开关关掉：

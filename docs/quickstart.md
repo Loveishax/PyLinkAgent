@@ -172,3 +172,14 @@ export HTTP_SERVER_TRACING=true
 - [examples/fastapi_mysql_shadow_demo/README.md](../examples/fastapi_mysql_shadow_demo/README.md)
 
 这个 demo 已经在本地真实 MySQL 跑通过。
+
+## 7. 联调诊断
+
+如果内网联调时需要快速看当前探针状态，可以执行：
+
+```bash
+python scripts/diagnose.py
+python scripts/diagnose.py http://127.0.0.1:8000
+```
+
+第二条会额外抓取业务应用的 `/debug/runtime`。
