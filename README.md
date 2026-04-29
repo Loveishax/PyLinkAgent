@@ -143,3 +143,4 @@ python scripts/diagnose.py http://127.0.0.1:8000
 - [ZooKeeper 集成现状](docs/ZOOKEEPER_INTEGRATION.md)
 - [影子路由现状](docs/SHADOW_ROUTING_GUIDE.md)
 - [FastAPI MySQL Demo](examples/fastapi_mysql_shadow_demo/README.md)
+- [Intranet Validation Checklist](docs/intranet_validation_checklist.md)
