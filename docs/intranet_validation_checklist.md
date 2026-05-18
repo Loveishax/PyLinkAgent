@@ -41,6 +41,8 @@
 - [ ] 节点内容包含 `pid`
 - [ ] 节点内容包含 `envCode`
 - [ ] 节点内容包含 `tenantAppKey`
+- [ ] 正常停止应用后节点立即消失
+- [ ] 强制杀进程后节点会在 `SIMULATOR_ZK_SESSION_TIMEOUT_MS` 对应时间后消失
 
 ## 4. 控制台配置下发验证
 

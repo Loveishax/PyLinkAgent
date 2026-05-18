@@ -86,6 +86,29 @@ os.environ["APP_NAME"] = "my-python-app"
 import pylinkagent
 ```
 
+## ZooKeeper 节点回收说明
+
+PyLinkAgent 的 ZK 在线节点和 Java Agent 一样是 `EPHEMERAL` 节点，回收分两种情况：
+
+- 正常退出或可捕获退出信号：探针会主动执行 `shutdown`，立即删除节点并关闭 ZK 会话。
+- 强制杀进程：例如 `kill -9`、`taskkill /F`，进程没有机会执行清理逻辑，节点会在 ZK `session timeout` 到期后自动消失。
+
+当前支持通过环境变量调小等待时间：
+
+```bash
+export SIMULATOR_ZK_SESSION_TIMEOUT_MS=12000
+export SIMULATOR_ZK_CONNECTION_TIMEOUT_MS=15000
+```
+
+Windows PowerShell：
+
+```powershell
+$env:SIMULATOR_ZK_SESSION_TIMEOUT_MS="12000"
+$env:SIMULATOR_ZK_CONNECTION_TIMEOUT_MS="15000"
+```
+
+如果你希望“直接杀进程后尽快从控制台消失”，建议内网联调时先把 `SIMULATOR_ZK_SESSION_TIMEOUT_MS` 调到 `10000-15000` 再观察。
+
 ## FastAPI + MySQL Demo
 
 用于验证最关键的数据隔离链路。

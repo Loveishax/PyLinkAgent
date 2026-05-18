@@ -24,6 +24,9 @@ Python 探针在 ZK 侧当前优先保证两件事：
 - 在线节点创建
 - 节点数据刷新
 - 断连后的基础恢复逻辑
+- 正常退出时主动删除在线节点并关闭 ZK 会话
+- `SIGTERM`、`SIGINT`、`SIGBREAK`、`SIGHUP` 关闭钩子
+- `session timeout` / `connection timeout` 环境变量配置
 
 ## 3. 节点路径规则
 
@@ -67,7 +70,24 @@ Python 探针在 ZK 侧当前优先保证两件事：
 - `name` 当前已改为应用名，而不是工作目录名
 - `jdk` 和 `jdkVersion` 当前都会写成 `Python x.y.z`
 
-## 5. 与 Java Agent 的关系
+## 5. 节点回收行为
+
+当前在线节点使用临时节点，行为与 Java Agent 一致：
+
+- 正常退出：探针执行 `shutdown`，主动删除节点。
+- 可捕获终止信号：探针会进入同一条关闭链路，尽量立即删除节点。
+- 强制终止：如果进程无法执行清理代码，节点依赖 ZK 会话超时回收。
+
+可用环境变量：
+
+- `SIMULATOR_ZK_SESSION_TIMEOUT_MS`
+- `SIMULATOR_ZK_CONNECTION_TIMEOUT_MS`
+- `ZK_SESSION_TIMEOUT_MS`
+- `ZK_CONNECTION_TIMEOUT_MS`
+
+建议内网联调时把 `SIMULATOR_ZK_SESSION_TIMEOUT_MS` 设到 `10000-15000`，方便观察强制杀进程后的节点回收。
+
+## 6. 与 Java Agent 的关系
 
 当前已经对齐的关键点：
 
@@ -82,7 +102,7 @@ Python 探针在 ZK 侧当前优先保证两件事：
 - 日志服务发现与数据推送
 - 更完整的状态码、错误码和模块协同信息
 
-## 6. 当前结论
+## 7. 当前结论
 
 不能再说“Python 探针没有 ZK 实现”，因为基础设施和在线节点链路已经有了。
 

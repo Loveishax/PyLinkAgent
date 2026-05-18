@@ -1,22 +1,24 @@
 """
-ZooKeeper 集成模块
+ZooKeeper integration for PyLinkAgent.
 
-将 ZooKeeper 心跳功能集成到 PyLinkAgent 主流程中
-实现双心跳机制 (HTTP + ZK) 以匹配 Java LinkAgent 行为
+This module wires the heartbeat manager into the bootstrap lifecycle and keeps
+the shutdown path close to the Java agent: stop the heartbeat node first, then
+close the ZooKeeper client session.
 """
 
-import threading
 import logging
-from typing import Optional, Callable
 import os
+import threading
+from typing import Callable, Optional
 
 from ..zookeeper import (
-    ZkConfig,
-    ZkClient,
-    ZkHeartbeatManager,
     AgentStatus,
-    get_config,
+    ZkClient,
+    ZkClientFactory,
+    ZkConfig,
+    ZkHeartbeatManager,
     create_client,
+    get_config,
     get_heartbeat_manager,
     reset_heartbeat_manager,
 )
@@ -25,203 +27,144 @@ logger = logging.getLogger(__name__)
 
 
 class ZKIntegration:
-    """
-    ZooKeeper 集成管理器
-
-    负责管理 ZK 连接和心跳的生命周期
-    """
+    """Manage the ZooKeeper client and heartbeat lifecycle."""
 
     def __init__(self, config: Optional[ZkConfig] = None):
-        """
-        初始化 ZK 集成
-
-        Args:
-            config: ZK 配置，为 None 时使用默认配置
-        """
         self.config = config or get_config()
         self._client: Optional[ZkClient] = None
         self._heartbeat_manager: Optional[ZkHeartbeatManager] = None
         self._is_initialized = False
         self._is_running = False
         self._lock = threading.Lock()
-
-        # 状态变更回调
-        self._status_callbacks: list = []
+        self._status_callbacks: list[Callable[[str], None]] = []
 
     def initialize(self, client: Optional[ZkClient] = None) -> bool:
-        """
-        初始化 ZK 集成
-
-        Args:
-            client: 可选的 ZK 客户端，为 None 时自动创建
-
-        Returns:
-            bool: 初始化成功返回 True
-        """
+        """Create the ZK client and initialize the heartbeat manager."""
         with self._lock:
             if self._is_initialized:
-                logger.warning("ZK 集成已初始化")
+                logger.warning("ZK integration already initialized")
                 return True
 
             try:
-                logger.info(f"开始初始化 ZK 集成：{self.config.zk_servers}")
+                logger.info("Initializing ZK integration: %s", self.config.zk_servers)
 
-                # 创建或获取 ZK 客户端
-                if client is None:
-                    self._client = create_client(self.config)
-                else:
-                    self._client = client
-
-                # 连接 ZK
+                self._client = client or create_client(self.config)
                 if not self._client.connect():
-                    logger.error("ZK 连接失败")
+                    logger.error("Failed to connect to ZooKeeper")
                     return False
 
-                # 初始化心跳管理器
                 self._heartbeat_manager = get_heartbeat_manager(self.config)
                 if not self._heartbeat_manager.initialize(self._client):
-                    logger.error("心跳管理器初始化失败")
+                    logger.error("Failed to initialize heartbeat manager")
                     return False
 
                 self._is_initialized = True
-                logger.info(f"ZK 集成初始化成功：{self.config.zk_servers}")
+                logger.info("ZK integration initialized")
                 return True
-
-            except Exception as e:
-                logger.error(f"ZK 集成初始化失败：{e}")
+            except Exception as exc:
+                logger.error("Failed to initialize ZK integration: %s", exc)
                 return False
 
     def start(self) -> bool:
-        """
-        启动 ZK 心跳
-
-        Returns:
-            bool: 启动成功返回 True
-        """
+        """Start the heartbeat node management."""
         with self._lock:
             if not self._is_initialized:
-                logger.error("ZK 集成未初始化")
+                logger.error("ZK integration is not initialized")
                 return False
 
             if self._is_running:
-                logger.warning("ZK 心跳已启动")
+                logger.warning("ZK heartbeat already started")
                 return True
 
             try:
-                # 启动心跳管理器
                 if self._heartbeat_manager and self._heartbeat_manager.start():
                     self._is_running = True
-                    logger.info("ZK 心跳启动成功")
+                    logger.info("ZK heartbeat started")
                     return True
-                else:
-                    logger.error("ZK 心跳启动失败")
-                    return False
-
-            except Exception as e:
-                logger.error(f"ZK 心跳启动失败：{e}")
+                logger.error("Failed to start ZK heartbeat")
+                return False
+            except Exception as exc:
+                logger.error("Failed to start ZK heartbeat: %s", exc)
                 return False
 
     def stop(self) -> None:
-        """停止 ZK 心跳"""
+        """Stop the heartbeat node and keep the client session for shutdown."""
         with self._lock:
             if not self._is_running:
                 return
 
             try:
                 self._is_running = False
-
-                # 停止心跳管理器
                 if self._heartbeat_manager:
                     self._heartbeat_manager.stop()
-
-                logger.info("ZK 心跳已停止")
-
-            except Exception as e:
-                logger.error(f"ZK 心跳停止失败：{e}")
+                logger.info("ZK heartbeat stopped")
+            except Exception as exc:
+                logger.error("Failed to stop ZK heartbeat: %s", exc)
 
     def shutdown(self) -> None:
-        """完全关闭 ZK 集成"""
+        """Fully close the ZK integration and release the cached client."""
         self.stop()
 
         with self._lock:
             try:
-                # 断开客户端连接
                 if self._client:
-                    self._client.disconnect()
+                    ZkClientFactory.remove_client(self.config)
+                    self._client = None
 
-                # 重置全局管理器
+                self._heartbeat_manager = None
                 reset_heartbeat_manager()
-
                 self._is_initialized = False
-                logger.info("ZK 集成已关闭")
-
-            except Exception as e:
-                logger.error(f"ZK 集成关闭失败：{e}")
+                self._is_running = False
+                logger.info("ZK integration closed")
+            except Exception as exc:
+                logger.error("Failed to close ZK integration: %s", exc)
 
     def update_status(self, status: AgentStatus, error_msg: str = "") -> None:
-        """
-        更新 Agent 状态
-
-        Args:
-            status: Agent 状态
-            error_msg: 错误信息
-        """
+        """Update the agent status payload stored in the heartbeat node."""
         if not self._is_running or not self._heartbeat_manager:
-            logger.warning("ZK 心跳未运行，无法更新状态")
+            logger.warning("ZK heartbeat is not running, status update skipped")
             return
 
         self._heartbeat_manager.update_status(status, error_msg)
-        logger.info(f"ZK Agent 状态已更新：{status.value}")
+        logger.info("ZK agent status updated: %s", status.value)
 
-    def set_simulator_info(self, service: str, port: int, md5: str = "",
-                          jars: list = None) -> None:
-        """
-        设置 Simulator 信息并刷新心跳
-
-        Args:
-            service: 服务地址
-            port: 端口
-            md5: 模块 MD5
-            jars: JAR 列表
-        """
+    def set_simulator_info(
+        self,
+        service: str,
+        port: int,
+        md5: str = "",
+        jars: Optional[list] = None,
+    ) -> None:
+        """Refresh the heartbeat payload with simulator metadata."""
         if not self._heartbeat_manager:
-            logger.warning("心跳管理器未初始化")
+            logger.warning("Heartbeat manager is not initialized")
             return
 
         self._heartbeat_manager.set_simulator_info(service, port, md5, jars)
         self._heartbeat_manager.refresh()
-        logger.info(f"Simulator 信息已设置：service={service}, port={port}")
+        logger.info("Simulator info updated: service=%s, port=%s", service, port)
 
     def add_status_callback(self, callback: Callable[[str], None]) -> None:
-        """添加状态变更回调"""
+        """Register a status change listener."""
+        self._status_callbacks.append(callback)
         if self._heartbeat_manager:
             self._heartbeat_manager.add_status_listener(callback)
 
     def is_running(self) -> bool:
-        """检查 ZK 心跳是否运行"""
+        """Return whether the heartbeat manager is currently running."""
         return self._is_running
 
     def is_initialized(self) -> bool:
-        """检查是否已初始化"""
+        """Return whether the integration has been initialized."""
         return self._is_initialized
 
-
-# ==================== 全局集成实例 ====================
 
 _global_integration: Optional[ZKIntegration] = None
 _integration_lock = threading.Lock()
 
 
 def get_integration(config: Optional[ZkConfig] = None) -> Optional[ZKIntegration]:
-    """
-    获取全局 ZK 集成实例
-
-    Args:
-        config: ZK 配置
-
-    Returns:
-        ZKIntegration 实例
-    """
+    """Return the process-global ZK integration instance."""
     global _global_integration
 
     with _integration_lock:
@@ -230,9 +173,10 @@ def get_integration(config: Optional[ZkConfig] = None) -> Optional[ZKIntegration
         return _global_integration
 
 
-def reset_integration():
-    """重置全局集成实例 (用于测试)"""
+def reset_integration() -> None:
+    """Reset the process-global ZK integration singleton."""
     global _global_integration
+
     with _integration_lock:
         if _global_integration:
             _global_integration.shutdown()
@@ -240,47 +184,41 @@ def reset_integration():
 
 
 def initialize_zk() -> bool:
-    """
-    初始化并启动 ZK 集成
-
-    从环境变量读取配置，如果 ZK 不可用则优雅降级
-
-    Returns:
-        bool: 初始化成功返回 True
-    """
-    # 检查是否启用 ZK
+    """Initialize and start ZK integration when enabled by env config."""
     register_name = os.getenv("REGISTER_NAME", "zookeeper")
     zk_enabled = os.getenv("ZK_ENABLED", "true").lower() == "true"
 
     if register_name.lower() != "zookeeper" or not zk_enabled:
-        logger.info(f"ZK 集成已禁用：REGISTER_NAME={register_name}, ZK_ENABLED={zk_enabled}")
+        logger.info(
+            "ZK integration disabled: REGISTER_NAME=%s, ZK_ENABLED=%s",
+            register_name,
+            zk_enabled,
+        )
         return False
 
     try:
         integration = get_integration()
-        if integration.initialize():
-            if integration.start():
-                logger.info("ZK 集成启动成功")
-                return True
-            else:
-                logger.warning("ZK 集成启动失败")
-                return False
-        else:
-            logger.warning("ZK 集成初始化失败")
+        if not integration.initialize():
+            logger.warning("Failed to initialize ZK integration")
+            return False
+        if not integration.start():
+            logger.warning("Failed to start ZK integration")
             return False
 
-    except Exception as e:
-        logger.warning(f"ZK 集成失败，降级到 HTTP-only 模式：{e}")
+        logger.info("ZK integration started")
+        return True
+    except Exception as exc:
+        logger.warning("Falling back to HTTP-only mode because ZK init failed: %s", exc)
         return False
 
 
 def shutdown_zk() -> None:
-    """关闭 ZK 集成"""
+    """Shut down the process-global ZK integration."""
     try:
         integration = get_integration()
         if integration:
             integration.shutdown()
             reset_integration()
-            logger.info("ZK 集成已关闭")
-    except Exception as e:
-        logger.error(f"关闭 ZK 集成失败：{e}")
+            logger.info("ZK integration shut down")
+    except Exception as exc:
+        logger.error("Failed to shut down ZK integration: %s", exc)

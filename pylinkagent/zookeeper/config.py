@@ -38,6 +38,17 @@ def get_host_name() -> str:
         return "localhost"
 
 
+def _parse_int(value: Any, default: int, field_name: str) -> int:
+    """Parse an integer config value and fall back on invalid input."""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid ZK config integer for %s: %r, using %s", field_name, value, default)
+        return default
+
+
 @dataclass
 class ZkConfig:
     """ZooKeeper configuration."""
@@ -108,6 +119,20 @@ class ZkConfig:
             if value:
                 setattr(config, attr_name, value)
 
+        int_env_mappings = {
+            "SIMULATOR_ZK_CONNECTION_TIMEOUT": "connection_timeout_ms",
+            "SIMULATOR_ZK_CONNECTION_TIMEOUT_MS": "connection_timeout_ms",
+            "SIMULATOR_ZK_SESSION_TIMEOUT": "session_timeout_ms",
+            "SIMULATOR_ZK_SESSION_TIMEOUT_MS": "session_timeout_ms",
+            "ZK_CONNECTION_TIMEOUT_MS": "connection_timeout_ms",
+            "ZK_SESSION_TIMEOUT_MS": "session_timeout_ms",
+        }
+        for env_name, attr_name in int_env_mappings.items():
+            value = os.environ.get(env_name)
+            if value is not None:
+                current = getattr(config, attr_name)
+                setattr(config, attr_name, _parse_int(value, current, attr_name))
+
         system_prop_mappings = {
             "SIMULATOR_ZK_SERVERS": "zk_servers",
             "SIMULATOR_APP_NAME": "app_name",
@@ -137,10 +162,12 @@ class ZkConfig:
             )
 
         logger.info(
-            "ZK config ready: zk_servers=%s, app_name=%s, agent_id=%s",
+            "ZK config ready: zk_servers=%s, app_name=%s, agent_id=%s, session_timeout_ms=%s, connection_timeout_ms=%s",
             config.zk_servers,
             config.app_name,
             config.agent_id,
+            config.session_timeout_ms,
+            config.connection_timeout_ms,
         )
         return config
 

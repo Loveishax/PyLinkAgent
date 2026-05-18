@@ -245,6 +245,8 @@ ZooKeeper：
 - `/config/log/pradar/client/<appName>/<fullAgentId>` 是否存在
 - 节点是否为临时节点
 - 节点数据里是否有 `agentLanguage=PYTHON`
+- 正常停止应用后节点是否立即消失
+- 强制杀进程后节点是否会在 `SIMULATOR_ZK_SESSION_TIMEOUT_MS` 对应的超时时间后消失
 
 应用：
 
@@ -258,6 +260,20 @@ ZooKeeper：
 
 - 普通请求只写业务库
 - 压测请求只写影子库
+
+## 3.6 ZK 节点回收专项验证
+
+建议单独补一轮 ZK 回收验证：
+
+1. 启动应用并确认 `/config/log/pradar/client/<appName>/<fullAgentId>` 已创建。
+2. 正常停止应用，确认节点立即消失。
+3. 重新启动应用，再用强制终止方式结束进程。
+4. 观察节点是否在 `SIMULATOR_ZK_SESSION_TIMEOUT_MS` 设定时间后自动消失。
+
+说明：
+
+- Java Agent 也是 `EPHEMERAL` 节点加 ZK 会话超时回收，不存在 `kill -9` 后还能主动删节点的特殊逻辑。
+- PyLinkAgent 已补充 `SIGTERM`、`SIGINT`、`SIGBREAK`、`SIGHUP` 的关闭钩子；可捕获退出会尽量立即清理节点。
 
 ## 4. 建议保留的证据
 

@@ -142,6 +142,8 @@ export SIMULATOR_AGENT_ID=<plain-agent-id>
 export SIMULATOR_ENV_CODE=<env-code>
 export SIMULATOR_USER_ID=<user-id>
 export SIMULATOR_TENANT_APP_KEY=<tenant-app-key>
+export SIMULATOR_ZK_SESSION_TIMEOUT_MS=12000
+export SIMULATOR_ZK_CONNECTION_TIMEOUT_MS=15000
 python -c "import pylinkagent; import time; time.sleep(90)"
 ```
 
@@ -150,6 +152,13 @@ python -c "import pylinkagent; import time; time.sleep(90)"
 - `/config/log/pradar/client/<appName>/<fullAgentId>` 是否出现
 - 节点是否为临时节点
 - 节点数据里是否有 `agentLanguage=PYTHON`
+- 如果强制杀进程，节点是否会在 `session timeout` 后自动消失
+
+说明：
+
+- 正常退出、`SIGTERM`、`SIGINT`、`SIGBREAK` 这类可捕获退出，探针会主动删除 ZK 节点。
+- `kill -9`、`taskkill /F` 这类强制终止不会执行清理逻辑，行为和 Java Agent 一样，依赖 ZK 会话超时回收临时节点。
+- 如果内网希望节点更快消失，优先调小 `SIMULATOR_ZK_SESSION_TIMEOUT_MS`。
 
 ### 第四步：开启影子路由
 
