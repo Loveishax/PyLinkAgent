@@ -363,6 +363,13 @@ class PyLinkAgentBootstrapper:
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+        for optional_signal in ("SIGBREAK", "SIGHUP"):
+            signum = getattr(signal, optional_signal, None)
+            if signum is not None:
+                try:
+                    signal.signal(signum, signal_handler)
+                except (OSError, ValueError):
+                    logger.debug("Skip unsupported signal hook: %s", optional_signal)
         atexit.register(self.shutdown)
         logger.info("已注册关闭钩子")
 
