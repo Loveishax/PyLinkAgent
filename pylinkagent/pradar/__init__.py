@@ -12,7 +12,10 @@ PyLinkAgent Pradar - 链路追踪核心
 """
 
 from .context import InvokeContext, ContextManager
+from .events import SpanEvent, get_event_store
+from .exporter import SpanEventExporter, get_span_exporter
 from .pradar import Pradar
+from .uploader import SpanUploader
 from .switcher import PradarSwitcher
 from .trace_id import TraceIdGenerator
 from .whitelist import WhitelistManager, WhitelistEntry, MatchType
@@ -20,6 +23,11 @@ from .whitelist import WhitelistManager, WhitelistEntry, MatchType
 __all__ = [
     "InvokeContext",
     "ContextManager",
+    "SpanEvent",
+    "get_event_store",
+    "SpanEventExporter",
+    "get_span_exporter",
+    "SpanUploader",
     "Pradar",
     "PradarSwitcher",
     "TraceIdGenerator",

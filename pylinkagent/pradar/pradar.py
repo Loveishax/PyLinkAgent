@@ -5,6 +5,7 @@ Pradar - 链路追踪核心 API
 """
 
 import logging
+import os
 from typing import Optional, Dict, Any, List
 from .context import InvokeContext, ContextManager, get_context_manager
 from .trace_id import TraceIdGenerator
@@ -63,6 +64,7 @@ class Pradar:
         # 检查是否是压测流量
         if PradarSwitcher.is_cluster_test_enabled():
             context.set_cluster_test(True)
+        context.app_name = app_name
 
         logger.debug(f"Pradar.start_trace: trace_id={context.trace_id}")
         return context
@@ -79,6 +81,7 @@ class Pradar:
         context = ctx_manager.pop_context()
 
         if context:
+            cls.record_completed_span(context)
             logger.debug(
                 f"Pradar.end_trace: trace_id={context.trace_id}, "
                 f"cost={context.cost_time:.2f}ms"
@@ -113,6 +116,18 @@ class Pradar:
         """获取当前 Invoke ID"""
         ctx_manager = get_context_manager()
         return ctx_manager.get_invoke_id()
+
+    @classmethod
+    def record_completed_span(cls, context: InvokeContext) -> None:
+        """Persist a finished span into the local diagnostics store."""
+        from .events import get_event_store
+
+        event = context.to_span_event()
+        event.agent_id = os.getenv("AGENT_ID", f"pylinkagent-{os.getpid()}")
+        event.tenant_app_key = os.getenv("TENANT_APP_KEY", "")
+        event.env_code = os.getenv("ENV_CODE", "test")
+        event.user_id = os.getenv("USER_ID", "")
+        get_event_store().append(event)
 
     @classmethod
     def set_cluster_test(cls, is_test: bool) -> None:
@@ -192,6 +207,7 @@ class Pradar:
         context = ctx_manager.get_current_context()
         if context:
             context.request_params = params
+            context.request_summary = str(params)
 
     @classmethod
     def get_request_params(cls) -> Optional[Dict[str, Any]]:
@@ -209,6 +225,65 @@ class Pradar:
         context = ctx_manager.get_current_context()
         if context:
             context.response_result = result
+            context.response_summary = str(result)
+
+    @classmethod
+    def set_request_summary(cls, summary: str) -> None:
+        ctx_manager = get_context_manager()
+        context = ctx_manager.get_current_context()
+        if context:
+            context.request_summary = summary
+
+    @classmethod
+    def set_response_summary(cls, summary: str) -> None:
+        ctx_manager = get_context_manager()
+        context = ctx_manager.get_current_context()
+        if context:
+            context.response_summary = summary
+
+    @classmethod
+    def set_result_code(cls, result_code: Any) -> None:
+        ctx_manager = get_context_manager()
+        context = ctx_manager.get_current_context()
+        if context:
+            context.result_code = str(result_code)
+
+    @classmethod
+    def set_remote_endpoint(cls, remote_ip: str = "", port: int = 0) -> None:
+        ctx_manager = get_context_manager()
+        context = ctx_manager.get_current_context()
+        if context:
+            context.remote_ip = remote_ip
+            context.port = port
+
+    @classmethod
+    def set_up_app_name(cls, up_app_name: str) -> None:
+        ctx_manager = get_context_manager()
+        context = ctx_manager.get_current_context()
+        if context:
+            context.up_app_name = up_app_name
+
+    @classmethod
+    def set_span_semantics(
+        cls,
+        middleware_name: str = "",
+        invoke_type: str = "",
+        is_entry: Optional[bool] = None,
+        is_server: Optional[bool] = None,
+    ) -> None:
+        ctx_manager = get_context_manager()
+        context = ctx_manager.get_current_context()
+        if context:
+            if middleware_name:
+                context.middleware_name = middleware_name
+                if not context.middleware_type:
+                    context.middleware_type = middleware_name
+            if invoke_type:
+                context.invoke_type = invoke_type
+            if is_entry is not None:
+                context.is_entry = is_entry
+            if is_server is not None:
+                context.is_server = is_server
 
     @classmethod
     def get_response_result(cls) -> Optional[Any]:
@@ -281,6 +356,11 @@ class Pradar:
 
         if remote_app:
             cls.set_remote_appname(remote_app)
+            context.up_app_name = remote_app
+
+        context.invoke_type = "SERVER"
+        context.middleware_name = "RPC"
+        context.is_server = True
 
         return context
 
@@ -326,6 +406,9 @@ class Pradar:
         context.start()
 
         cls.set_remote_appname(remote_app)
+        context.invoke_type = "CLIENT"
+        context.middleware_name = "RPC"
+        context.up_app_name = remote_app
 
         return context
 
@@ -343,6 +426,45 @@ class Pradar:
     def get_remote_appname(cls) -> Optional[str]:
         """获取远程应用名称"""
         return cls.get_user_data(cls.REMOTE_APPNAME_KEY)
+
+    @classmethod
+    def start_child_span(
+        cls,
+        service_name: str,
+        method_name: str,
+        middleware_name: str,
+        invoke_type: str,
+        remote_ip: str = "",
+        port: int = 0,
+        up_app_name: str = "",
+        is_server: bool = False,
+    ) -> Optional[InvokeContext]:
+        """Create a child span that inherits the current trace context."""
+        ctx_manager = get_context_manager()
+        parent = ctx_manager.get_current_context()
+        if not parent:
+            return None
+
+        context = ctx_manager.create_context(
+            app_name=parent.app_name,
+            service_name=service_name,
+            method_name=method_name,
+            middleware_type=middleware_name,
+        )
+        context.trace_id = parent.trace_id
+        context.cluster_test = parent.cluster_test
+        context.cluster_test_flag = parent.cluster_test_flag
+        context.user_data = parent.user_data.copy()
+        context.app_name = parent.app_name
+        context.middleware_name = middleware_name
+        context.invoke_type = invoke_type
+        context.remote_ip = remote_ip
+        context.port = port
+        context.up_app_name = up_app_name
+        context.is_server = is_server
+        ctx_manager.push_context(context)
+        context.start()
+        return context
 
     @classmethod
     def export_context(cls) -> Dict[str, str]:

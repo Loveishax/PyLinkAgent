@@ -24,10 +24,14 @@ class InvokeContext:
     service_name: str = ""
     method_name: str = ""
     middleware_type: str = ""
+    middleware_name: str = ""
+    invoke_type: str = ""
     cluster_test: bool = False
     cluster_test_flag: str = "0"
     user_data: Dict[str, str] = field(default_factory=dict)
     local_data: Dict[str, Any] = field(default_factory=dict)
+    attributes: Dict[str, Any] = field(default_factory=dict)
+    local_attributes: Dict[str, Any] = field(default_factory=dict)
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
     cost_time: float = 0.0
@@ -37,6 +41,14 @@ class InvokeContext:
     error_msg: str = ""
     request_params: Optional[Dict[str, Any]] = None
     response_result: Optional[Any] = None
+    result_code: str = ""
+    remote_ip: str = ""
+    port: int = 0
+    up_app_name: str = ""
+    is_entry: bool = False
+    is_server: bool = False
+    request_summary: str = ""
+    response_summary: str = ""
 
     INVOKE_ID_LENGTH_LIMIT = 64
     MAX_USER_DATA_SIZE = 10
@@ -100,6 +112,35 @@ class InvokeContext:
         self.has_error = True
         self.error_msg = error_msg
 
+    def to_span_event(self) -> "SpanEvent":
+        from .events import SpanEvent
+
+        return SpanEvent(
+            trace_id=self.trace_id,
+            invoke_id=self.invoke_id,
+            parent_invoke_id=self.parent_context.invoke_id if self.parent_context else "",
+            app_name=self.app_name,
+            invoke_type=self.invoke_type,
+            middleware_name=self.middleware_name or self.middleware_type,
+            service_name=self.service_name,
+            method_name=self.method_name,
+            result_code=self.result_code,
+            cluster_test=self.cluster_test,
+            is_entry=self.is_entry,
+            is_server=self.is_server,
+            up_app_name=self.up_app_name,
+            remote_ip=self.remote_ip,
+            port=self.port,
+            request_summary=self.request_summary,
+            response_summary=self.response_summary,
+            error_message=self.error_msg,
+            start_time_ms=int(self.start_time * 1000),
+            end_time_ms=int((self.end_time or self.start_time) * 1000),
+            cost_ms=self.cost_time,
+            attributes=self.attributes.copy(),
+            local_attributes=self.local_attributes.copy(),
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "trace_id": self.trace_id,
@@ -108,6 +149,8 @@ class InvokeContext:
             "service_name": self.service_name,
             "method_name": self.method_name,
             "middleware_type": self.middleware_type,
+            "middleware_name": self.middleware_name,
+            "invoke_type": self.invoke_type,
             "cluster_test": self.cluster_test,
             "cluster_test_flag": self.cluster_test_flag,
             "user_data": self.user_data,
@@ -116,6 +159,14 @@ class InvokeContext:
             "cost_time": self.cost_time,
             "has_error": self.has_error,
             "error_msg": self.error_msg,
+            "result_code": self.result_code,
+            "remote_ip": self.remote_ip,
+            "port": self.port,
+            "up_app_name": self.up_app_name,
+            "is_entry": self.is_entry,
+            "is_server": self.is_server,
+            "request_summary": self.request_summary,
+            "response_summary": self.response_summary,
         }
 
 

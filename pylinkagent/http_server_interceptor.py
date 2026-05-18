@@ -159,16 +159,26 @@ class HTTPServerTracingInterceptor:
 
             headers = PressureTrafficDetector.from_wsgi_environ(environ)
             method = environ.get("REQUEST_METHOD", "GET")
-            trace_started = self._enter_request(method, path, headers)
+            remote_ip = self._get_wsgi_remote_ip(environ)
+            status_holder: Dict[str, int] = {}
+
+            def traced_start_response(status, response_headers, exc_info=None):
+                status_holder["status"] = self._parse_status_code(status)
+                return start_response(status, response_headers, exc_info)
+
+            trace_started = self._enter_request(method, path, headers, remote_ip=remote_ip)
 
             try:
-                response_iterable = wrapped(app_instance, environ, start_response)
+                response_iterable = wrapped(app_instance, environ, traced_start_response)
                 return _WSGIResponseWrapper(
                     response_iterable,
-                    lambda: self._exit_request(trace_started),
+                    lambda: self._exit_request(
+                        trace_started,
+                        status_code=status_holder.get("status"),
+                    ),
                 )
             except Exception as exc:
-                self._exit_request(trace_started, exc)
+                self._exit_request(trace_started, exc, 500)
                 raise
 
         return tracing_wsgi_app
@@ -184,16 +194,35 @@ class HTTPServerTracingInterceptor:
 
             headers = PressureTrafficDetector.from_asgi_scope(scope)
             method = scope.get("method", "GET")
-            trace_started = self._enter_request(method, path, headers)
+            client = scope.get("client") or ("", 0)
+            remote_ip = str(client[0]) if len(client) > 0 else ""
+            remote_port = int(client[1]) if len(client) > 1 and client[1] else 0
+            status_holder: Dict[str, int] = {}
+
+            async def traced_send(message):
+                if message.get("type") == "http.response.start":
+                    status_holder["status"] = int(message.get("status", 200))
+                await send(message)
+
+            trace_started = self._enter_request(
+                method,
+                path,
+                headers,
+                remote_ip=remote_ip,
+                port=remote_port,
+            )
 
             try:
-                return await wrapped(app_instance, scope, receive, send)
+                return await wrapped(app_instance, scope, receive, traced_send)
             except Exception as exc:
-                self._exit_request(trace_started, exc)
+                self._exit_request(trace_started, exc, 500)
                 raise
             finally:
                 if trace_started and Pradar.has_context():
-                    self._exit_request(trace_started)
+                    self._exit_request(
+                        trace_started,
+                        status_code=status_holder.get("status"),
+                    )
 
         return tracing_asgi_app
 
@@ -231,11 +260,26 @@ class HTTPServerTracingInterceptor:
         self._fastapi_patched = True
         logger.info("FastAPI ingress tracing patched")
 
-    def _enter_request(self, method: str, path: str, headers: Dict[str, str]) -> bool:
+    def _enter_request(
+        self,
+        method: str,
+        path: str,
+        headers: Dict[str, str],
+        remote_ip: str = "",
+        port: int = 0,
+    ) -> bool:
         if Pradar.has_context():
             return False
 
         Pradar.start_trace(self.app_name, path, method)
+        Pradar.set_span_semantics(
+            middleware_name="HTTP",
+            invoke_type="HTTP_SERVER",
+            is_entry=True,
+            is_server=True,
+        )
+        Pradar.set_request_summary(f"{method} {path}")
+        Pradar.set_remote_endpoint(remote_ip, port)
         is_cluster_test = PressureTrafficDetector.is_cluster_test(headers)
         Pradar.set_cluster_test(is_cluster_test)
         if is_cluster_test:
@@ -243,14 +287,37 @@ class HTTPServerTracingInterceptor:
         return True
 
     @staticmethod
-    def _exit_request(trace_started: bool, error: Optional[Exception] = None) -> None:
+    def _exit_request(
+        trace_started: bool,
+        error: Optional[Exception] = None,
+        status_code: Optional[int] = None,
+    ) -> None:
         if not trace_started:
             return
         if error is not None:
             Pradar.set_error(str(error))
+        Pradar.set_result_code(status_code or (500 if error else 200))
+        Pradar.set_response_summary(f"status={status_code or (500 if error else 200)}")
         if Pradar.has_context():
             Pradar.end_trace()
         Pradar.clear()
 
     def _should_ignore(self, path: str) -> bool:
         return any(path.startswith(ignored) for ignored in self.ignored_paths)
+
+    @staticmethod
+    def _parse_status_code(status: Any) -> int:
+        if isinstance(status, int):
+            return status
+        try:
+            return int(str(status).split(" ", 1)[0])
+        except (TypeError, ValueError, AttributeError):
+            return 200
+
+    @staticmethod
+    def _get_wsgi_remote_ip(environ: Dict[str, Any]) -> str:
+        return str(
+            environ.get("HTTP_X_FORWARDED_FOR")
+            or environ.get("REMOTE_ADDR")
+            or ""
+        ).split(",", 1)[0].strip()

@@ -63,6 +63,8 @@ python -m pytest tests/test_http_ingress_tracing.py -q
 - `X-PyLinkAgent-Cluster-Test`
 - WSGI 请求生命周期上下文
 - ASGI 请求生命周期上下文
+- 入口请求结束后会落本地 `HTTP_SERVER` span
+- root span 会补齐 `request_summary`、`result_code`、`remote_ip`
 
 ### 1.5 MySQL 影子路由
 
@@ -77,6 +79,8 @@ python -m pytest tests/test_shadow_mysql_routing.py -q
 - `ShadowRouter.route_mysql()`
 - `MySQLShadowInterceptor`
 - `SQLAlchemyShadowInterceptor`
+- `cursor.execute/executemany` 会落本地 `DB` span
+- `execute` span 会补齐 SQL 摘要、目标库地址、结果码
 
 ### 1.6 FastAPI + MySQL 真实数据库端到端
 
@@ -108,6 +112,55 @@ python -m pytest tests/test_http_shadow_propagation.py -q
 
 - `requests` 下游调用自动注入 `X-Pradar-Cluster-Test: 1`
 - `httpx` 同步和异步下游调用自动注入 `X-Pradar-Cluster-Test: 1`
+- `requests/httpx` 下游调用会落本地 `HTTP_CLIENT` span
+
+### 1.8 本地 SpanEvent 语义层
+
+命令：
+
+```bash
+python -m pytest tests/test_span_event_model.py -q
+```
+
+覆盖：
+
+- root span 导出为统一 `SpanEvent`
+- child span 保留 `parent_invoke_id`
+- `HTTP_SERVER` / `HTTP_CLIENT` 语义字段
+- `DB` / `CACHE` 语义字段
+- 最近事件缓存可被 `/debug/runtime` 读取
+
+### 1.9 诊断快照与 Log Server 发现
+
+命令：
+
+```bash
+python -m pytest tests/test_runtime_snapshot_diagnostics.py tests/test_zk_log_server_integration.py tests/test_span_exporter.py -q
+```
+
+覆盖：
+
+- `/debug/runtime` 包含 `recent_spans`
+- `/debug/runtime` 包含 `span_export_preview`
+- `/debug/runtime` 包含 `selected_log_server/log_servers`
+- `ZKIntegration` 会拉起 log server discovery
+
+### 1.10 Draft Span Uploader
+
+命令：
+
+```bash
+python -m pytest tests/test_span_uploader.py -q
+```
+
+覆盖：
+
+- span 事件按 `event_id` 增量读取
+- uploader 可使用显式 URL 发送
+- uploader 可使用 ZK 发现到的 `selected_log_server`
+- uploader 可切换到 `java-collector-draft-v1`
+- uploader 可切换到 `java-http-trace-log-draft-v1`
+- uploader 状态可从 `/debug/runtime` 读取
 
 ## 2. 到哪一步可以去内网验证
 

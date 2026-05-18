@@ -20,6 +20,12 @@ PyLinkAgent 当前的目标不是一次性补齐 Java LinkAgent 的全部插件�
 - 控制台 HTTP 注册 / 心跳 / 配置拉取骨架接通
 - ZooKeeper 在线节点基础接通
 - Flask / FastAPI HTTP 入口染色
+- 本地 `SpanEvent` 统一语义模型和最近事件缓存
+- HTTP 入口 / HTTP 出口本地 trace 事件
+- MySQL execute / Redis execute 本地 trace 事件
+- draft 版 Span uploader 骨架，默认关闭
+- uploader 支持 `python-span-draft-v1` / `java-collector-draft-v1`
+- uploader 新增 `java-http-trace-log-draft-v1`
 - MySQL / SQLAlchemy / Redis / ES / Kafka / HTTP 影子路由拦截骨架
 - 远程压测开关、白名单开关、远程调用白名单、DB/Redis/ES/Kafka 配置进入运行时
 - FastAPI + MySQL 真实数据库 demo
@@ -126,6 +132,9 @@ python examples/fastapi_mysql_shadow_demo/init_demo_db.py
 - 普通请求写入 `pylinkagent_demo_biz`
 - 带 `X-Pradar-Cluster-Test: 1` 的请求写入 `pylinkagent_demo_shadow`
 - `GET /debug/runtime` 可返回当前探针运行快照
+- `GET /debug/runtime` 当前会附带最近 10 条 `recent_spans`
+- `GET /debug/runtime` 当前会附带 `selected_log_server/log_servers/span_export_preview`
+- `GET /debug/runtime` 当前会附带 `span_uploader` 状态
 - 压测流量下游 HTTP 调用会自动透传 `X-Pradar-Cluster-Test: 1`
 
 ## 已完成验证
@@ -136,8 +145,14 @@ python examples/fastapi_mysql_shadow_demo/init_demo_db.py
 - 自动加载烟测
 - 运行时配置同步测试
 - 控制台字段对齐测试
+- `SpanEvent` 模型测试
+- `SpanEvent` 导出 payload 测试
+- Span uploader 增量读取与目标选择测试
 - HTTP 入口染色测试
+- HTTP 出口 trace + 压测标记透传测试
 - MySQL 影子路由测试
+- MySQL / Redis execute span 测试
+- ZK log server discovery 集成测试
 - FastAPI + MySQL 真实数据库端到端测试
 
 核心命令：
@@ -145,6 +160,7 @@ python examples/fastapi_mysql_shadow_demo/init_demo_db.py
 ```bash
 python -m pytest tests/test_runtime_config_sync.py -q
 python -m pytest tests/test_control_plane_alignment.py -q
+python -m pytest tests/test_span_event_model.py -q
 python -m pytest tests/test_http_ingress_tracing.py -q
 python -m pytest tests/test_shadow_mysql_routing.py -q
 python -m pytest tests/test_fastapi_demo_e2e.py -q
@@ -163,7 +179,9 @@ python scripts/diagnose.py http://127.0.0.1:8000
 - [快速开始](docs/quickstart.md)
 - [验证方案](docs/verification.md)
 - [当前架构](docs/architecture.md)
+- [Trace 语义与中间件差异设计](docs/trace_semantic_design.md)
 - [ZooKeeper 集成现状](docs/ZOOKEEPER_INTEGRATION.md)
 - [影子路由现状](docs/SHADOW_ROUTING_GUIDE.md)
 - [FastAPI MySQL Demo](examples/fastapi_mysql_shadow_demo/README.md)
 - [Intranet Validation Checklist](docs/intranet_validation_checklist.md)
+- [AI 交接与内网验证说明](docs/ai_handoff_intranet_validation.md)

@@ -7,6 +7,8 @@ Redis 影子路由拦截器
 
 import logging
 
+from ..pradar import Pradar
+
 try:
     import wrapt
     WRAPT_AVAILABLE = True
@@ -97,10 +99,63 @@ class RedisShadowInterceptor:
                     )
 
                 super().__init__(*args, **kwargs)
+                self._pylinkagent_shadow_target = {
+                    "host": kwargs.get("host", host),
+                    "port": int(kwargs.get("port", port)),
+                    "db": int(kwargs.get("db", db) or 0),
+                }
 
             @property
             def _router(self):
                 return self.__class__._shadow_router
 
+            def execute_command(self, *args, **kwargs):
+                span_ctx = self.__class__._start_redis_span(
+                    self._pylinkagent_shadow_target,
+                    args,
+                )
+                try:
+                    result = super().execute_command(*args, **kwargs)
+                    if span_ctx:
+                        Pradar.set_result_code("SUCCESS")
+                        Pradar.set_response_summary("redis=ok")
+                    return result
+                except Exception as exc:
+                    if span_ctx:
+                        Pradar.set_error(str(exc))
+                        Pradar.set_result_code("EXCEPTION")
+                    raise
+                finally:
+                    if span_ctx and Pradar.get_context() is span_ctx:
+                        Pradar.end_trace()
+
         ShadowRedisProxy._shadow_router = self.router
+        ShadowRedisProxy._start_redis_span = staticmethod(self._start_redis_span)
         return ShadowRedisProxy
+
+    @staticmethod
+    def _start_redis_span(target, command_args):
+        if not Pradar.has_context():
+            return None
+
+        command_name = "UNKNOWN"
+        if command_args:
+            command_name = str(command_args[0]).upper()
+        host = target.get("host", "redis")
+        port = int(target.get("port", 6379))
+        db = int(target.get("db", 0))
+        span_ctx = Pradar.start_child_span(
+            service_name=f"{host}:{port}/{db}",
+            method_name=command_name,
+            middleware_name="REDIS",
+            invoke_type="CACHE",
+            remote_ip=host,
+            port=port,
+            up_app_name="redis",
+            is_server=False,
+        )
+        if span_ctx:
+            summary = " ".join(str(arg) for arg in command_args[:4])[:256]
+            Pradar.set_request_summary(summary)
+            Pradar.set_response_summary("redis=pending")
+        return span_ctx

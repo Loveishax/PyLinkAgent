@@ -3,6 +3,10 @@ HTTP client shadow routing interceptor.
 """
 
 import logging
+from typing import Any, Dict, Tuple
+from urllib.parse import urlsplit
+
+from ..pradar import Pradar
 
 try:
     import wrapt
@@ -83,12 +87,26 @@ class HTTPShadowInterceptor:
 
         @functools.wraps(self._original_requests_request)
         def wrapped_request(session, method, url, *args, **kwargs):
-            headers = dict(kwargs.get("headers") or {})
-            if self.router.should_route():
-                headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
+            headers = self._inject_cluster_test_header(dict(kwargs.get("headers") or {}), url)
+            if headers:
                 kwargs["headers"] = headers
-                logger.debug("Injected pressure header into requests: %s", url)
-            return self._original_requests_request(session, method, url, *args, **kwargs)
+
+            span_ctx = self._start_http_client_span(method, url)
+            try:
+                response = self._original_requests_request(session, method, url, *args, **kwargs)
+                if span_ctx:
+                    Pradar.set_result_code(getattr(response, "status_code", "200"))
+                    Pradar.set_response_summary(
+                        f"status={getattr(response, 'status_code', 200)}"
+                    )
+                return response
+            except Exception as exc:
+                if span_ctx:
+                    Pradar.set_error(str(exc))
+                    Pradar.set_result_code("EXCEPTION")
+                raise
+            finally:
+                self._finish_http_client_span(span_ctx)
 
         requests.Session.request = wrapped_request
 
@@ -104,13 +122,82 @@ class HTTPShadowInterceptor:
             if self.router.should_route():
                 request.headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
                 logger.debug("Injected pressure header into httpx: %s", request.url)
-            return self._original_httpx_send(client, request, *args, **kwargs)
+
+            span_ctx = self._start_http_client_span(request.method, str(request.url))
+            try:
+                response = self._original_httpx_send(client, request, *args, **kwargs)
+                if span_ctx:
+                    Pradar.set_result_code(getattr(response, "status_code", "200"))
+                    Pradar.set_response_summary(
+                        f"status={getattr(response, 'status_code', 200)}"
+                    )
+                return response
+            except Exception as exc:
+                if span_ctx:
+                    Pradar.set_error(str(exc))
+                    Pradar.set_result_code("EXCEPTION")
+                raise
+            finally:
+                self._finish_http_client_span(span_ctx)
 
         @functools.wraps(self._original_httpx_async_send)
         async def wrapped_async_send(client, request, *args, **kwargs):
             if self.router.should_route():
                 request.headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
-            return await self._original_httpx_async_send(client, request, *args, **kwargs)
+            span_ctx = self._start_http_client_span(request.method, str(request.url))
+            try:
+                response = await self._original_httpx_async_send(client, request, *args, **kwargs)
+                if span_ctx:
+                    Pradar.set_result_code(getattr(response, "status_code", "200"))
+                    Pradar.set_response_summary(
+                        f"status={getattr(response, 'status_code', 200)}"
+                    )
+                return response
+            except Exception as exc:
+                if span_ctx:
+                    Pradar.set_error(str(exc))
+                    Pradar.set_result_code("EXCEPTION")
+                raise
+            finally:
+                self._finish_http_client_span(span_ctx)
 
         httpx.Client.send = wrapped_send
         httpx.AsyncClient.send = wrapped_async_send
+
+    def _inject_cluster_test_header(self, headers: Dict[str, Any], url: str) -> Dict[str, Any]:
+        if self.router.should_route():
+            headers[CLUSTER_TEST_HEADER] = CLUSTER_TEST_VALUE
+            logger.debug("Injected pressure header into outbound HTTP: %s", url)
+        return headers
+
+    def _start_http_client_span(self, method: str, url: str):
+        if not Pradar.has_context():
+            return None
+
+        service_name, method_name, remote_ip, port = self._parse_request_target(method, url)
+        span_ctx = Pradar.start_child_span(
+            service_name=service_name,
+            method_name=method_name,
+            middleware_name="HTTP",
+            invoke_type="HTTP_CLIENT",
+            remote_ip=remote_ip,
+            port=port,
+            up_app_name=service_name,
+            is_server=False,
+        )
+        if span_ctx:
+            Pradar.set_request_summary(url)
+        return span_ctx
+
+    @staticmethod
+    def _finish_http_client_span(span_ctx) -> None:
+        if span_ctx and Pradar.get_context() is span_ctx:
+            Pradar.end_trace()
+
+    @staticmethod
+    def _parse_request_target(method: str, url: str) -> Tuple[str, str, str, int]:
+        parsed = urlsplit(url)
+        host = parsed.hostname or parsed.netloc or "unknown-host"
+        path = parsed.path or "/"
+        port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
+        return host, f"{str(method).upper()} {path}", host, port

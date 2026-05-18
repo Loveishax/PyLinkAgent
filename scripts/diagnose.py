@@ -15,7 +15,7 @@ import os
 import socket
 import sys
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import requests
 
@@ -39,6 +39,46 @@ def _fetch_runtime_endpoint(base_url: str) -> Dict[str, Any]:
     response = requests.get(url, timeout=5)
     response.raise_for_status()
     return response.json()
+
+
+def _print_runtime_summary(snapshot: Dict[str, Any], title: str) -> None:
+    print(f"\n[{title}]")
+    print(
+        "  running={running} app={app_name} agent={agent_id}".format(
+            running=snapshot.get("running"),
+            app_name=snapshot.get("app_name"),
+            agent_id=snapshot.get("agent_id"),
+        )
+    )
+    print(
+        "  zk_running={zk_running} log_server_discovery_running={ls_running} log_server_count={count}".format(
+            zk_running=snapshot.get("zk_running"),
+            ls_running=snapshot.get("log_server_discovery_running"),
+            count=snapshot.get("log_server_count"),
+        )
+    )
+    selected = snapshot.get("selected_log_server") or {}
+    if selected:
+        print(
+            "  selected_log_server={address} type={server_type} status={status}".format(
+                address=selected.get("address") or selected.get("host"),
+                server_type=selected.get("serverType"),
+                status=selected.get("status"),
+            )
+        )
+    recent_spans: List[Dict[str, Any]] = snapshot.get("recent_spans") or []
+    print(f"  recent_spans={len(recent_spans)}")
+    for item in recent_spans[-5:]:
+        print(
+            "    - {invoke_type}/{middleware_name} {service_name} {method_name} result={result_code} cost={cost_ms}".format(
+                invoke_type=item.get("invoke_type", ""),
+                middleware_name=item.get("middleware_name", ""),
+                service_name=item.get("service_name", ""),
+                method_name=item.get("method_name", ""),
+                result_code=item.get("result_code", ""),
+                cost_ms=item.get("cost_ms", 0),
+            )
+        )
 
 
 def main() -> int:
@@ -92,6 +132,7 @@ def main() -> int:
         import pylinkagent
 
         snapshot = pylinkagent.get_runtime_snapshot()
+        _print_runtime_summary(snapshot, "本进程快照摘要")
         print(json.dumps(snapshot, indent=2, ensure_ascii=False))
     except Exception as exc:
         print(f"  无法获取本进程快照: {exc}")
@@ -100,6 +141,7 @@ def main() -> int:
         print("\n[应用运行时快照]")
         try:
             payload = _fetch_runtime_endpoint(runtime_url)
+            _print_runtime_summary(payload, "应用 /debug/runtime 摘要")
             print(json.dumps(payload, indent=2, ensure_ascii=False))
         except Exception as exc:
             print(f"  获取 {runtime_url}/debug/runtime 失败: {exc}")

@@ -95,11 +95,12 @@ Python 探针在 ZK 侧当前优先保证两件事：
 - `agentLanguage`
 - `envCode/userId/tenantAppKey`
 - `jdk/jdkVersion`
+- log server discovery 已接入主启动链路，并可在 `/debug/runtime` 观察
 
 当前还没完全对齐的部分：
 
 - client path / watch 的完整主流程集成
-- 日志服务发现与数据推送
+- 日志服务发现后的真实数据推送
 - 更完整的状态码、错误码和模块协同信息
 
 ## 7. 当前结论

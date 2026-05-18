@@ -20,7 +20,10 @@ from ..zookeeper import (
     create_client,
     get_config,
     get_heartbeat_manager,
+    get_log_server_discovery,
+    LogServerSelector,
     reset_heartbeat_manager,
+    reset_log_server_discovery,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,8 @@ class ZKIntegration:
         self.config = config or get_config()
         self._client: Optional[ZkClient] = None
         self._heartbeat_manager: Optional[ZkHeartbeatManager] = None
+        self._log_server_discovery = None
+        self._log_server_selector: Optional[LogServerSelector] = None
         self._is_initialized = False
         self._is_running = False
         self._lock = threading.Lock()
@@ -58,6 +63,15 @@ class ZKIntegration:
                     logger.error("Failed to initialize heartbeat manager")
                     return False
 
+                if os.getenv("ZK_LOG_SERVER_DISCOVERY", "true").lower() == "true":
+                    self._log_server_discovery = get_log_server_discovery(self.config)
+                    if self._log_server_discovery and self._log_server_discovery.initialize(self._client):
+                        self._log_server_selector = LogServerSelector(self._log_server_discovery)
+                    else:
+                        logger.warning("Failed to initialize ZK log server discovery")
+                        self._log_server_discovery = None
+                        self._log_server_selector = None
+
                 self._is_initialized = True
                 logger.info("ZK integration initialized")
                 return True
@@ -78,6 +92,8 @@ class ZKIntegration:
 
             try:
                 if self._heartbeat_manager and self._heartbeat_manager.start():
+                    if self._log_server_discovery:
+                        self._log_server_discovery.start()
                     self._is_running = True
                     logger.info("ZK heartbeat started")
                     return True
@@ -97,6 +113,8 @@ class ZKIntegration:
                 self._is_running = False
                 if self._heartbeat_manager:
                     self._heartbeat_manager.stop()
+                if self._log_server_discovery:
+                    self._log_server_discovery.stop()
                 logger.info("ZK heartbeat stopped")
             except Exception as exc:
                 logger.error("Failed to stop ZK heartbeat: %s", exc)
@@ -112,7 +130,12 @@ class ZKIntegration:
                     self._client = None
 
                 self._heartbeat_manager = None
+                if self._log_server_discovery:
+                    self._log_server_discovery.stop()
+                self._log_server_discovery = None
+                self._log_server_selector = None
                 reset_heartbeat_manager()
+                reset_log_server_discovery()
                 self._is_initialized = False
                 self._is_running = False
                 logger.info("ZK integration closed")
@@ -157,6 +180,22 @@ class ZKIntegration:
     def is_initialized(self) -> bool:
         """Return whether the integration has been initialized."""
         return self._is_initialized
+
+    def get_log_servers(self) -> list[dict]:
+        """Return discovered log servers for diagnostics."""
+        if not self._log_server_discovery:
+            return []
+        return [item.to_dict() for item in self._log_server_discovery.get_servers()]
+
+    def get_selected_log_server(self) -> Optional[dict]:
+        """Return the preferred log server for diagnostics."""
+        if not self._log_server_selector:
+            return None
+        server = self._log_server_selector.select()
+        return server.to_dict() if server else None
+
+    def is_log_server_discovery_running(self) -> bool:
+        return bool(self._log_server_discovery and self._is_running)
 
 
 _global_integration: Optional[ZKIntegration] = None

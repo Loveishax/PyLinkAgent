@@ -3,6 +3,7 @@ import asyncio
 import httpx
 import requests
 
+from pylinkagent.pradar import Pradar, get_event_store
 from pylinkagent.shadow.http_interceptor import (
     CLUSTER_TEST_HEADER,
     CLUSTER_TEST_VALUE,
@@ -18,6 +19,16 @@ class _FakeRouter:
         return self._should_route
 
 
+def setup_function():
+    Pradar.clear()
+    get_event_store().clear()
+
+
+def teardown_function():
+    Pradar.clear()
+    get_event_store().clear()
+
+
 def test_requests_outbound_header_injected(monkeypatch):
     observed = {}
 
@@ -31,10 +42,21 @@ def test_requests_outbound_header_injected(monkeypatch):
     assert interceptor.patch() is True
 
     try:
+        Pradar.start_trace("demo-app", "/upstream", "GET")
         session = requests.Session()
         result = session.request("GET", "http://example.com")
         assert result == {"ok": True}
         assert observed["headers"][CLUSTER_TEST_HEADER] == CLUSTER_TEST_VALUE
+        Pradar.end_trace()
+        spans = get_event_store().list_recent(limit=2)
+        child_span = spans[-2]
+        root_span = spans[-1]
+        assert child_span.invoke_type == "HTTP_CLIENT"
+        assert child_span.middleware_name == "HTTP"
+        assert child_span.service_name == "example.com"
+        assert child_span.method_name == "GET /"
+        assert child_span.result_code == "200"
+        assert root_span.invoke_id == "0"
     finally:
         interceptor.unpatch()
 
@@ -57,6 +79,7 @@ def test_httpx_outbound_header_injected(monkeypatch):
     assert interceptor.patch() is True
 
     try:
+        Pradar.start_trace("demo-app", "/upstream", "GET")
         client = httpx.Client()
         request = client.build_request("GET", "http://example.com")
         response = client.send(request)
@@ -71,6 +94,11 @@ def test_httpx_outbound_header_injected(monkeypatch):
 
         asyncio.run(run_async())
         assert observed["async_cluster_header"] == CLUSTER_TEST_VALUE
+        Pradar.end_trace()
+        spans = get_event_store().list_recent()
+        http_client_spans = [span for span in spans if span.invoke_type == "HTTP_CLIENT"]
+        assert len(http_client_spans) == 2
+        assert all(span.result_code == "200" for span in http_client_spans)
     finally:
         interceptor.unpatch()
 

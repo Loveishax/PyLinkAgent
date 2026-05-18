@@ -26,6 +26,7 @@ class PyLinkAgentBootstrapper:
         self._heartbeat_reporter = None
         self._command_poller = None
         self._zk_integration = None
+        self._span_uploader = None
         self._app_registrator = None
         self._http_server_interceptor = None
         self._shadow_enabled = False
@@ -51,6 +52,7 @@ class PyLinkAgentBootstrapper:
             self._init_runtime_config()
             self._init_http_server_tracing()
             self._init_shadow_routing()
+            self._init_span_uploader()
 
             if not self._start_heartbeat_reporter():
                 logger.error("心跳上报启动失败")
@@ -76,6 +78,10 @@ class PyLinkAgentBootstrapper:
             logger.info(
                 "  ZK 心跳：%s",
                 "启用" if self._zk_integration and self._zk_integration.is_running() else "未启用",
+            )
+            logger.info(
+                "  Span 上传：%s",
+                "已启用" if self._span_uploader and self._span_uploader.is_running() else "未启用",
             )
             logger.info(
                 "  应用注册：%s",
@@ -219,6 +225,21 @@ class PyLinkAgentBootstrapper:
             )
         except Exception as exc:
             logger.warning("  影子路由初始化失败: %s", exc)
+
+    def _init_span_uploader(self) -> None:
+        if os.getenv("PYLINKAGENT_SPAN_UPLOAD_ENABLED", "false").lower() != "true":
+            logger.info("Span 上传已禁用(PYLINKAGENT_SPAN_UPLOAD_ENABLED=false)")
+            return
+
+        try:
+            from .pradar import SpanUploader
+
+            uploader = SpanUploader(self._zk_integration)
+            if uploader.start():
+                self._span_uploader = uploader
+                logger.info("Span 上传器已启用")
+        except Exception as exc:
+            logger.warning("Span 上传器初始化失败: %s", exc)
 
     def _init_runtime_config(self) -> None:
         try:
@@ -380,6 +401,7 @@ class PyLinkAgentBootstrapper:
                 self._config_fetcher,
                 self._command_poller,
                 self._zk_integration,
+                self._span_uploader,
                 self._http_server_interceptor,
                 self._external_api,
             ]
@@ -406,6 +428,11 @@ class PyLinkAgentBootstrapper:
             self._command_poller.stop()
             logger.info("  命令轮询已停止")
             self._command_poller = None
+
+        if self._span_uploader:
+            self._span_uploader.stop()
+            logger.info("  Span 上传器已关闭")
+            self._span_uploader = None
 
         if self._http_server_interceptor:
             try:

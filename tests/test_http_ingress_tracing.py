@@ -5,17 +5,19 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pylinkagent.http_server_interceptor import HTTPServerTracingInterceptor, PressureTrafficDetector
-from pylinkagent.pradar import Pradar, PradarSwitcher
+from pylinkagent.pradar import Pradar, PradarSwitcher, get_event_store
 
 
 def setup_function():
     Pradar.clear()
     PradarSwitcher.reset()
+    get_event_store().clear()
 
 
 def teardown_function():
     Pradar.clear()
     PradarSwitcher.reset()
+    get_event_store().clear()
 
 
 def test_pressure_header_detector_recognizes_supported_headers():
@@ -42,6 +44,7 @@ def test_wsgi_wrapper_keeps_context_until_response_finishes():
             "REQUEST_METHOD": "GET",
             "PATH_INFO": "/orders",
             "HTTP_X_PRADAR_CLUSTER_TEST": "1",
+            "REMOTE_ADDR": "10.0.0.8",
         },
         lambda status, headers, exc_info=None: None,
     )
@@ -91,3 +94,39 @@ def test_asgi_wrapper_creates_and_clears_context():
     assert observed["inside_cluster_test"] is True
     assert Pradar.has_context() is False
     assert len(sent_messages) == 2
+    recent_span = get_event_store().list_recent(limit=1)[0]
+    assert recent_span.invoke_type == "HTTP_SERVER"
+    assert recent_span.middleware_name == "HTTP"
+    assert recent_span.cluster_test is True
+    assert recent_span.request_summary == "POST /orders"
+    assert recent_span.result_code == "200"
+
+
+def test_wsgi_wrapper_records_root_span():
+    interceptor = HTTPServerTracingInterceptor(app_name="demo-app")
+
+    def fake_wsgi_app(app_instance, environ, start_response):
+        start_response("204 NO CONTENT", [])
+        return iter([b""])
+
+    wrapped = interceptor.wrap_wsgi_app(fake_wsgi_app)
+    response = wrapped(
+        object(),
+        {
+            "REQUEST_METHOD": "GET",
+            "PATH_INFO": "/inventory",
+            "REMOTE_ADDR": "172.18.0.10",
+        },
+        lambda status, headers, exc_info=None: None,
+    )
+
+    assert list(response) == [b""]
+
+    recent_span = get_event_store().list_recent(limit=1)[0]
+    assert recent_span.app_name == "demo-app"
+    assert recent_span.invoke_id == "0"
+    assert recent_span.remote_ip == "172.18.0.10"
+    assert recent_span.request_summary == "GET /inventory"
+    assert recent_span.result_code == "204"
+    assert recent_span.is_entry is True
+    assert recent_span.is_server is True
