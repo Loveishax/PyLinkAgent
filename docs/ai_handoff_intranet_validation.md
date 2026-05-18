@@ -146,6 +146,40 @@
 - [scripts/diagnose.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/scripts/diagnose.py)
   - 增强联调诊断输出
 
+### 3.5 本次提交涉及的完整文件清单
+
+这一节不是“核心文件”，而是完整文件路径清单，方便 AI 或内网同学逐个比对。
+
+- [README.md](/D:/soft/agent/LinkAgent-main/PyLinkAgent/README.md)
+- [docs/ZOOKEEPER_INTEGRATION.md](/D:/soft/agent/LinkAgent-main/PyLinkAgent/docs/ZOOKEEPER_INTEGRATION.md)
+- [docs/ai_handoff_intranet_validation.md](/D:/soft/agent/LinkAgent-main/PyLinkAgent/docs/ai_handoff_intranet_validation.md)
+- [docs/architecture.md](/D:/soft/agent/LinkAgent-main/PyLinkAgent/docs/architecture.md)
+- [docs/trace_semantic_design.md](/D:/soft/agent/LinkAgent-main/PyLinkAgent/docs/trace_semantic_design.md)
+- [docs/verification.md](/D:/soft/agent/LinkAgent-main/PyLinkAgent/docs/verification.md)
+- [pylinkagent/bootstrap.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/bootstrap.py)
+- [pylinkagent/controller/zk_integration.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/controller/zk_integration.py)
+- [pylinkagent/http_server_interceptor.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/http_server_interceptor.py)
+- [pylinkagent/pradar/__init__.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/pradar/__init__.py)
+- [pylinkagent/pradar/context.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/pradar/context.py)
+- [pylinkagent/pradar/events.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/pradar/events.py)
+- [pylinkagent/pradar/exporter.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/pradar/exporter.py)
+- [pylinkagent/pradar/pradar.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/pradar/pradar.py)
+- [pylinkagent/pradar/uploader.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/pradar/uploader.py)
+- [pylinkagent/runtime_snapshot.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/runtime_snapshot.py)
+- [pylinkagent/shadow/http_interceptor.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/shadow/http_interceptor.py)
+- [pylinkagent/shadow/mysql_interceptor.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/shadow/mysql_interceptor.py)
+- [pylinkagent/shadow/redis_interceptor.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/pylinkagent/shadow/redis_interceptor.py)
+- [scripts/diagnose.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/scripts/diagnose.py)
+- [tests/test_http_ingress_tracing.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_http_ingress_tracing.py)
+- [tests/test_http_shadow_propagation.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_http_shadow_propagation.py)
+- [tests/test_runtime_snapshot_diagnostics.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_runtime_snapshot_diagnostics.py)
+- [tests/test_shadow_mysql_routing.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_shadow_mysql_routing.py)
+- [tests/test_span_event_model.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_span_event_model.py)
+- [tests/test_span_exporter.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_span_exporter.py)
+- [tests/test_span_uploader.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_span_uploader.py)
+- [tests/test_zk_log_server_integration.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_zk_log_server_integration.py)
+- [tests/test_zk_shutdown_behavior.py](/D:/soft/agent/LinkAgent-main/PyLinkAgent/tests/test_zk_shutdown_behavior.py)
+
 ## 4. 当前推荐的内网验证模式
 
 推荐使用：
