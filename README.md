@@ -179,6 +179,7 @@ python scripts/diagnose.py http://127.0.0.1:8000
 - [快速开始](docs/quickstart.md)
 - [验证方案](docs/verification.md)
 - [当前架构](docs/architecture.md)
+- [项目背景与接手说明](docs/project_background_and_handoff.md)
 - [Trace 语义与中间件差异设计](docs/trace_semantic_design.md)
 - [ZooKeeper 集成现状](docs/ZOOKEEPER_INTEGRATION.md)
 - [影子路由现状](docs/SHADOW_ROUTING_GUIDE.md)
